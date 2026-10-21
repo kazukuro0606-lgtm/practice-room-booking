@@ -17,14 +17,10 @@ OPEN_DAYS_BEFORE_END = 7
 
 PRACTICE_SOLO = "個人練習"
 PRACTICE_ENSEMBLE = "アンサンブル"
-ROOM_3F = "3階の部屋（どこでも）"
-ROOM_TB = "TBの部屋"
 
-# 練習の種類ごとに使う部屋
-ROOM_FOR_PRACTICE = {PRACTICE_SOLO: ROOM_3F, PRACTICE_ENSEMBLE: ROOM_TB}
-
-# 予約サイトで選べる利用時間の上限が3時間より短い部屋
-ROOM_MAX_MIN = {ROOM_TB: 120}
+# 部屋を人ごとに選べるようになる前の予定の「希望する部屋」（部屋ごとの決まりは rooms.py）
+LEGACY_ROOM_3F = "3階の部屋（どこでも）"
+LEGACY_ROOM_TB = "TBの部屋"
 
 
 @dataclass(frozen=True)
@@ -33,8 +29,6 @@ class Check:
     opens_at: datetime
     daily_total_min: int
     over_daily_limit: bool
-    room_advice: str | None
-    over_room_limit: bool
 
 
 def start_datetime(use_date: date, start_time: time) -> datetime:
@@ -58,21 +52,11 @@ def daily_total(existing_min: int, duration_min: int) -> int:
     return existing_min + duration_min
 
 
-def room_advice(practice_type: str, room: str) -> str | None:
-    """個人練習は3階の部屋、アンサンブルはTBの部屋を使う。"""
-    expected = ROOM_FOR_PRACTICE.get(practice_type)
-    if expected and room != expected:
-        return f"{practice_type}では「{expected}」を使います。"
-    return None
-
-
 def check_plan(
     use_date: date,
     start_time: time,
     duration_min: int,
     existing_min: int,
-    practice_type: str,
-    room: str,
 ) -> Check:
     start_at = start_datetime(use_date, start_time)
     end_at = end_datetime(start_at, duration_min)
@@ -82,6 +66,4 @@ def check_plan(
         opens_at=booking_opens_at(end_at),
         daily_total_min=total,
         over_daily_limit=total > DAILY_LIMIT_MIN,
-        room_advice=room_advice(practice_type, room),
-        over_room_limit=duration_min > ROOM_MAX_MIN.get(room, max(DURATION_CHOICES_MIN)),
     )

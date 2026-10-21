@@ -15,7 +15,7 @@ import credentials
 from auto_login import ALLOWED_HOST, LOGIN_PATH, login
 from booking_rules import DURATION_CHOICES_MIN, TOKYO, booking_opens_at, end_datetime, start_datetime
 from notices import NOTICE_CHANGED, NOTICE_MISSING, notice_status
-from rooms import MAX_MINUTES, NEEDS_MEMBERS, event_id_of
+from rooms import NEEDS_MEMBERS, event_id_of, max_minutes, room_key
 
 BASE_URL = f"https://{ALLOWED_HOST}/senzoku"
 CONFIRM_PATH = "/senzoku/reserve/add_conf"
@@ -72,9 +72,9 @@ def fill_until_confirm(
         raise NotReached() from None
 
 
-def room_arg(room: str) -> int:
+def room_arg(room: str) -> str:
     try:
-        return event_id_of(room)
+        return room_key(room)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
 
@@ -102,9 +102,8 @@ def ask_members() -> list[str]:
 
 def main() -> None:
     args = parse_args()
-    max_minutes = MAX_MINUTES.get(args.room)
-    if max_minutes and args.minutes > max_minutes:
-        raise SystemExit(f"この部屋の利用時間は{max_minutes}分までです。")
+    if args.minutes > max_minutes(args.room):
+        raise SystemExit(f"この部屋の利用時間は{max_minutes(args.room)}分までです。")
     members = ask_members() if args.room in NEEDS_MEMBERS else None
     start_at = start_datetime(args.date, args.start)
     opens_at = booking_opens_at(end_datetime(start_at, args.minutes))
@@ -119,7 +118,7 @@ def main() -> None:
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
         try:
-            fill_until_confirm(page, add_url(args.room, args.date, args.start), args.minutes, args.use_type, members)
+            fill_until_confirm(page, add_url(event_id_of(args.room), args.date, args.start), args.minutes, args.use_type, members)
         except NotReached:
             raise SystemExit(NOT_REACHED_MESSAGE) from None
         print("確認画面まで進みました。予約はまだ完了していません（登録ボタンは押していません）。")

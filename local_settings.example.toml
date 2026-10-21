@@ -5,6 +5,3 @@
 # URL of the Reservation Engine page you normally open
 url = "https://example.com/"
 
-# (optional) 3rd-floor rooms to try first for solo practice, in order.
-# The rest are tried in room-number order, up to 5 rooms in total.
-# favorite_rooms = ["E325", "E326"]

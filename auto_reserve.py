@@ -4,16 +4,15 @@
   python auto_reserve.py --date 2026-10-26 --start 16:30 --minutes 90 --practice アンサンブル
 
 - 予約可能日時（利用終了の7日前）より前に起動すると、その時刻まで待ってから予約する（PCはつけたまま）。
-- 候補の部屋を順に試し、確認画面まで進めた部屋で「登録」を1回だけ押す。押した後は別の部屋を試さない。
+- 候補の部屋（予定に保存した部屋、またはその人の設定の部屋）を順に最大5室試し、確認画面まで進めた部屋で
+  「登録」を1回だけ押す。押した後は別の部屋を試さない。
 - --yes を付けない場合は、登録を押す前に PowerShell で確認を求める。
 """
 
 import argparse
 import sys
 import time as clock
-import tomllib
 from datetime import date, datetime, time, timedelta
-from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -23,8 +22,8 @@ from booking_rules import (
     DAILY_LIMIT_MIN,
     DURATION_CHOICES_MIN,
     PRACTICE_ENSEMBLE,
+    LEGACY_ROOM_TB,
     PRACTICE_SOLO,
-    ROOM_TB,
     TOKYO,
     booking_opens_at,
     end_datetime,
@@ -43,10 +42,8 @@ from plans_store import (
     record_run,
 )
 from reserve_dryrun import BASE_URL, CONFIRM_PATH, PAGE_TIMEOUT_MS, NotReached, add_url, ask_members, fill_until_confirm
-from rooms import ALL_ROOMS, MAX_MINUTES, NEEDS_MEMBERS, candidates
+from rooms import MAX_ROOMS_TO_TRY, NEEDS_MEMBERS, event_id_of, needs_members, rooms_for_plan, rooms_setting
 
-LOCAL_SETTINGS_FILE = Path(__file__).parent / "local_settings.toml"
-MAX_ROOMS_TO_TRY = 5
 LOGIN_BEFORE_OPEN = timedelta(minutes=3)
 # サイトの時計とのずれに備えて、予約可能日時の少し後に送る
 SEND_AFTER_OPEN = timedelta(seconds=2)
@@ -54,13 +51,9 @@ SEND_AFTER_OPEN = timedelta(seconds=2)
 COMPLETE_TITLE = "予約登録完了"
 
 
-def favorite_rooms(user: str | None) -> list[str]:
-    """その人が画面で設定した部屋の順番を優先し、なければ local_settings.toml の favorite_rooms を使う。"""
-    if user and (rooms := load_settings(user)["favorite_rooms"]):
-        return rooms
-    if not LOCAL_SETTINGS_FILE.exists():
-        return []
-    return tomllib.loads(LOCAL_SETTINGS_FILE.read_text(encoding="utf-8")).get("favorite_rooms", [])
+def chosen_rooms(user: str | None, practice: str) -> list[str]:
+    """その人が設定した、練習の種類ごとの部屋（設定がなければ初期値）。"""
+    return rooms_setting(load_settings(user) if user else {})[practice]
 
 
 def wait_until(target: datetime, label: str) -> None:
@@ -109,10 +102,16 @@ def apply_plan(args: argparse.Namespace) -> list[str]:
     args.date = date.fromisoformat(plan["use_date"])
     args.start = time.fromisoformat(plan["start"])
     args.minutes = plan["duration_min"]
-    # 試す部屋は、予定で選んだ部屋（3階／TB）で決める
-    args.practice = PRACTICE_ENSEMBLE if plan["room"] == ROOM_TB else PRACTICE_SOLO
     # 予約は、予定を登録した本人のログイン情報で行う
     args.user = plan.get("owner")
+    if plan.get("rooms"):
+        # 登録したときに決めた部屋を、その順に試す
+        args.practice = plan["practice_type"]
+        args.rooms = plan["rooms"]
+    else:
+        # 部屋を人ごとに選べるようになる前の予定（希望する部屋：3階／TB）
+        args.practice = PRACTICE_ENSEMBLE if plan.get("room") == LEGACY_ROOM_TB else PRACTICE_SOLO
+        args.rooms = None
     booked = booked_minutes_on(plans, args.date, exclude_id=plan["id"], owner=args.user)
     total = plan.get("existing_min", 0) + booked + args.minutes
     if total > DAILY_LIMIT_MIN:
@@ -140,15 +139,13 @@ def main() -> None:
 
 def run(args: argparse.Namespace) -> None:
     plan_members = apply_plan(args) if args.plan_id else None
-    # よく使う部屋の順番は、個人練習（3階の部屋）のときだけ使う
-    preferred = favorite_rooms(args.user) if args.practice == PRACTICE_SOLO else []
-    rooms = candidates(args.practice, preferred, MAX_ROOMS_TO_TRY)
-    for room in rooms:
-        limit = MAX_MINUTES.get(ALL_ROOMS[room])
-        if limit and args.minutes > limit:
-            raise SystemExit(f"{room}の利用時間は{limit}分までです。")
+    rooms, too_long = rooms_for_plan(getattr(args, "rooms", None) or chosen_rooms(args.user, args.practice), args.minutes)
+    if too_long:
+        print(f"利用時間が長すぎるため試さない部屋：{', '.join(too_long)}")
+    if not rooms:
+        raise SystemExit("この利用時間で予約できる部屋がありません（部屋の設定か利用時間を見直してください）。")
     members = None
-    if any(ALL_ROOMS[r] in NEEDS_MEMBERS for r in rooms):
+    if needs_members(rooms):
         members = plan_members or ask_members()
 
     start_at = start_datetime(args.date, args.start)
@@ -179,9 +176,9 @@ def run(args: argparse.Namespace) -> None:
         full_rooms = []
         for room in rooms:
             print(f"{room} を試しています…")
-            room_members = members if ALL_ROOMS[room] in NEEDS_MEMBERS else None
+            room_members = members if room in NEEDS_MEMBERS else None
             try:
-                fill_until_confirm(page, add_url(ALL_ROOMS[room], args.date, args.start), args.minutes, members=room_members)
+                fill_until_confirm(page, add_url(event_id_of(room), args.date, args.start), args.minutes, members=room_members)
             except NotReached:
                 print(f"  {room} は確認画面まで進めませんでした（埋まっている可能性があります）。")
                 full_rooms.append(room)

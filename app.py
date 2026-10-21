@@ -17,9 +17,6 @@ from booking_rules import (
     DURATION_CHOICES_MIN,
     PRACTICE_ENSEMBLE,
     PRACTICE_SOLO,
-    ROOM_3F,
-    ROOM_MAX_MIN,
-    ROOM_TB,
     TOKYO,
     check_plan,
 )
@@ -41,12 +38,11 @@ from plans_store import (
     scheduler_last_seen,
     set_auto,
 )
-from rooms import ROOMS_3F
+from rooms import MAX_ROOMS_TO_TRY, max_minutes, needs_members, room_label, rooms_for_plan, rooms_setting, usable_rooms
 
 MAX_LOGIN_FAILURES = 5
 # 予約係はこの間隔より短く「動いている印」を書く。これより古ければ止まっているとみなす
 SCHEDULER_TIMEOUT = timedelta(minutes=2)
-ROOMS = [ROOM_3F, ROOM_TB]
 PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
 
 
@@ -57,6 +53,18 @@ def duration_label(minutes: int) -> str:
 
 def fmt(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def rooms_text(rooms: list[str]) -> str:
+    return "、".join(room_label(r) for r in rooms)
+
+
+def plan_rooms_text(plan: dict) -> str:
+    """一覧に出す部屋。部屋を人ごとに選べるようになる前の予定は「希望する部屋」をそのまま出す。"""
+    rooms = plan.get("rooms")
+    if not rooms:
+        return plan.get("room", "")
+    return room_label(rooms[0]) if len(rooms) == 1 else f"{room_label(rooms[0])} ほか{len(rooms) - 1}室"
 
 
 def scheduler_running(now: datetime) -> bool:
@@ -145,19 +153,30 @@ with st.expander("予約サイトのログイン情報" + ("（保存済み）" 
 
 # ---- 自動予約の設定 ----
 settings = load_settings(user)
-with st.expander("自動予約の設定"):
-    favorites = st.multiselect(
-        "個人練習で先に試す3階の部屋（選んだ順に試します）",
-        list(ROOMS_3F),
-        default=[r for r in settings["favorite_rooms"] if r in ROOMS_3F],
-        help="選ばなかった部屋は番号順に続けて試します。1回の予約で試すのは最大5室です。",
+my_rooms = rooms_setting(settings)
+with st.expander("自動予約の設定（使う部屋）"):
+    st.caption(
+        f"練習の種類ごとに、使う部屋を**試したい順に**選んでください。1回の予約で、上から最大{MAX_ROOMS_TO_TRY}室を試します。"
+        "選べるのは、予約画面の作りを確かめた部屋だけです。"
     )
+    chosen = {}
+    for practice in PRACTICE_TYPES:
+        chosen[practice] = st.multiselect(
+            f"{practice}で使う部屋（選んだ順に試します）",
+            usable_rooms(),
+            default=my_rooms[practice],
+            format_func=room_label,
+            key=f"rooms_{practice}",
+        )
     # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
     st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
-    if st.button("設定を保存"):
-        save_settings(user, {**settings, "favorite_rooms": favorites})
+    if st.button("設定を保存", disabled=not all(chosen.values())):
+        save_settings(user, {**settings, "rooms": chosen})
         settings = load_settings(user)
-        st.success("保存しました。これから予約係が始める予約に反映されます。")
+        my_rooms = rooms_setting(settings)
+        st.success("保存しました。これから登録する予定に使われます（登録済みの予定の部屋は変わりません）。")
+    if not all(chosen.values()):
+        st.caption("どちらの練習の種類も、1室以上選んでください。")
 
 # ---- 管理者：アカウントの管理 ----
 if admin:
@@ -216,11 +235,11 @@ start_time = st.selectbox(
 )
 duration = st.radio("利用時間", DURATION_CHOICES_MIN, format_func=duration_label, horizontal=True)
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
-room = st.selectbox("希望する部屋", ROOMS)
+plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration)
 members_text = ""
-if room == ROOM_TB:
+if needs_members(plan_rooms):
     members_text = st.text_area(
-        "同時利用者の学籍番号（1行に1人・TBの部屋では必須）",
+        "同時利用者の学籍番号（1行に1人・" + rooms_text([r for r in plan_rooms if needs_members([r])]) + "では必須）",
         help="予約係のPCにだけ保存します。一緒に使う人には、予約に使うことを伝えておいてください。",
     )
 members = [m.strip() for m in members_text.splitlines() if m.strip()]
@@ -236,7 +255,7 @@ existing = st.number_input(
 
 my_plans = plans_of(load_plans(), user)
 booked_in_app = booked_minutes_on(my_plans, use_date)
-check = check_plan(use_date, start_time, duration, int(existing) + booked_in_app, practice_type, room)
+check = check_plan(use_date, start_time, duration, int(existing) + booked_in_app)
 
 # ---- 2. 確認 ----
 st.header("2. 確認")
@@ -248,14 +267,17 @@ st.write(
 )
 if check.over_daily_limit:
     st.warning(f"この日の合計が{DAILY_LIMIT_MIN}分を超えています。この予定は自動予約できません。")
-if check.room_advice:
-    st.warning(check.room_advice)
-if check.over_room_limit:
-    st.error(f"{room}は{duration_label(ROOM_MAX_MIN[room])}までしか予約できません。")
-if room == ROOM_TB and not members:
-    st.error("TBの部屋では、同時利用者の学籍番号が必要です。")
+if plan_rooms:
+    st.write(f"試す部屋（この順）：{rooms_text(plan_rooms)}")
+if too_long:
+    st.caption("利用時間が長いため試さない部屋：" + "、".join(f"{room_label(r)}（{duration_label(max_minutes(r))}まで）" for r in too_long))
+if not plan_rooms:
+    st.error("この利用時間で予約できる部屋がありません。利用時間を短くするか、「自動予約の設定」で部屋を見直してください。")
+missing_members = needs_members(plan_rooms) and not members
+if missing_members:
+    st.error("同時利用者の学籍番号が必要な部屋が含まれています。")
 
-can_register = not check.over_room_limit and not (room == ROOM_TB and not members)
+can_register = bool(plan_rooms) and not missing_members
 if st.button("予定として登録する", disabled=not can_register):
     new_plan = {
         "id": new_id(),
@@ -265,7 +287,7 @@ if st.button("予定として登録する", disabled=not can_register):
         "end": check.end_at.strftime("%H:%M"),
         "duration_min": duration,
         "practice_type": practice_type,
-        "room": room,
+        "rooms": plan_rooms,
         "equipment": equipment,
         "members": members,
         "existing_min": int(existing),
@@ -293,9 +315,11 @@ for p in my_plans:
     else:
         label = "📝 予定（未予約）"
     with st.container(border=True):
-        st.write(f"{label}　{p['use_date']} {p['start']}〜{p['end']}　{p['room']}（{p['practice_type']}）")
+        st.write(f"{label}　{p['use_date']} {p['start']}〜{p['end']}　{plan_rooms_text(p)}（{p['practice_type']}）")
         members_note = f"　同時利用者：{len(p['members'])}人" if p.get("members") else ""
         st.caption(f"予約可能：{p['opens_at']}　設備：{p['equipment'] or 'なし'}{members_note}")
+        if p.get("rooms") and not booked:
+            st.caption(f"試す部屋（この順）：{rooms_text(p['rooms'])}")
         if last := p.get("last_run"):
             full = f"　埋まっていた部屋：{', '.join(last['full_rooms'])}" if last["full_rooms"] else ""
             st.caption(f"前回の自動予約（{last['at']}）：{last['result']}{full}")
