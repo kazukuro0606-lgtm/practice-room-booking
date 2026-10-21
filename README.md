@@ -65,16 +65,6 @@ python open_site.py
 
 Edgeが開き、予約ページが表示されます。Edgeのウィンドウを閉じると終了します。
 
-## 段階2-2の準備：ログイン画面の構造を調べる
-
-```powershell
-python inspect_page.py
-```
-
-Edgeでログイン画面を表示し（学籍番号・パスワードは入力しない）、PowerShellに戻って Enter を押します。
-入力欄とボタンの名前だけが表示され、`inspect_result.txt`（Git対象外）にも保存されます。
-入力された中身・URLのクエリ・Cookie は書き出しません。
-
 ## 段階2-2：自動ログイン（予約の入力・送信はしない）
 
 ログインIDとパスワードは Windows の資格情報マネージャーに保存します（ファイル・Gitには残りません）。
@@ -88,3 +78,13 @@ python auto_login.py
 - `credentials.py save`：ログインIDとパスワードを入力して保存します。パスワードは入力しても表示されません。
 - `auto_login.py`：Edgeを開いて自動でログインします。ログイン情報は `www4.revn.jp` のページにだけ入力します。
 - 保存したログイン情報を消すとき：`python credentials.py delete`
+
+## 段階2-3の準備：予約画面の構造を調べる
+
+```powershell
+python inspect_page.py
+```
+
+自動でログインした後、予約の画面を1つずつ進め、画面ごとにPowerShellで Enter を押すと記録します。終わるときは `q` を入力して Enter。
+**最後の「予約する」「申し込む」などのボタンは押さないでください。**
+入力欄・ボタン・リンクの名前だけを `inspect_result.txt`（Git対象外）に保存します。入力された中身・Cookie は書き出さず、URLの秘密らしい値は `***` で伏せます。
