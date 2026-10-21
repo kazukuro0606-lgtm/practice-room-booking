@@ -85,7 +85,11 @@ with st.expander("自動予約の設定"):
 
 st.header("1. 予定を入力")
 use_date = st.date_input("利用日", value=date.today())
-start_time = st.time_input("開始時刻", value=time(15, 0), step=1800)
+# 時刻の入力欄は環境によって操作しにくいため、30分刻みの一覧から選ぶ
+START_TIMES = [time(h, m) for h in range(24) for m in (0, 30)]
+start_time = st.selectbox(
+    "開始時刻", START_TIMES, index=START_TIMES.index(time(15, 0)), format_func=lambda t: t.strftime("%H:%M")
+)
 duration = st.radio("利用時間", DURATION_CHOICES_MIN, format_func=duration_label, horizontal=True)
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
 room = st.selectbox("希望する部屋", ROOMS)
