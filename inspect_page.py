@@ -44,13 +44,16 @@ COLLECT_JS = """
     text: ["input", "select", "textarea"].includes(el.tagName.toLowerCase()) ? "" : text(el.textContent),
     href: el.getAttribute("href") || "",
     onclick: text(el.getAttribute("onclick")),
+    // 選択肢の値はサイトが決めた固定値なので記録する（入力欄の中身は読まない）
+    value: ["checkbox", "radio"].includes(el.type) ? text(el.getAttribute("value")) : "",
+    required: el.required || el.getAttribute("aria-required") === "true" ? "yes" : "",
     options: el.tagName === "SELECT" ? [...el.options].slice(0, 15).map((o) => text(o.textContent)).join(" / ") : "",
     visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
   }));
 }
 """
 
-FIELDS = ("tag", "type", "id", "name", "class", "placeholder", "aria", "label", "text", "href", "onclick", "options")
+FIELDS = ("tag", "type", "id", "name", "class", "placeholder", "aria", "label", "text", "href", "onclick", "value", "required", "options")
 
 
 def safe_url(url: str) -> str:
