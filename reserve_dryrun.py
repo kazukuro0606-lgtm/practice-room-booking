@@ -25,6 +25,15 @@ PAGE_TIMEOUT_MS = 15_000
 USETIME_LABELS = {30: "30分", 60: "1時間", 90: "1時間 30分", 120: "2時間", 150: "2時間 30分", 180: "3時間"}
 DEFAULT_USE_TYPE = "個人練習"
 
+NOT_REACHED_MESSAGE = (
+    "確認画面まで進めませんでした。まだ予約できない日時か、その時間が埋まっている、"
+    "または画面の作りが変わった可能性があります。Edgeの画面を確認してください。"
+)
+
+
+class NotReached(Exception):
+    """その部屋では確認画面まで進めなかった（埋まっている等）。別の部屋なら進める可能性がある。"""
+
 
 def add_url(event_id: int, use_date: date, start: time, base_url: str = BASE_URL) -> str:
     query = urlencode({"event_id": event_id, "date": use_date.isoformat(), "time": start.strftime("%H:%M")})
@@ -53,10 +62,8 @@ def fill_until_confirm(
         page.click("#conf")
         page.wait_for_url(lambda u: CONFIRM_PATH in u, timeout=PAGE_TIMEOUT_MS)
     except Exception:
-        raise SystemExit(
-            "確認画面まで進めませんでした。まだ予約できない日時か、その時間が埋まっている、"
-            "または画面の作りが変わった可能性があります。Edgeの画面を確認してください。"
-        ) from None
+        # 例外の文面に入力値が含まれる可能性があるので、そのまま表示しない
+        raise NotReached() from None
 
 
 def room_arg(room: str) -> int:
@@ -105,7 +112,10 @@ def main() -> None:
         page.goto(BASE_URL + "/login/")
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
-        fill_until_confirm(page, add_url(args.room, args.date, args.start), args.minutes, args.use_type, members)
+        try:
+            fill_until_confirm(page, add_url(args.room, args.date, args.start), args.minutes, args.use_type, members)
+        except NotReached:
+            raise SystemExit(NOT_REACHED_MESSAGE) from None
         print("確認画面まで進みました。予約はまだ完了していません（登録ボタンは押していません）。")
         print("Edgeで内容を確認したら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
         page.wait_for_event("close", timeout=0)
