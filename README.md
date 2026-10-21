@@ -64,3 +64,13 @@ python open_site.py
 ```
 
 Edgeが開き、予約ページが表示されます。Edgeのウィンドウを閉じると終了します。
+
+## 段階2-2の準備：ログイン画面の構造を調べる
+
+```powershell
+python inspect_page.py
+```
+
+Edgeでログイン画面を表示し（学籍番号・パスワードは入力しない）、PowerShellに戻って Enter を押します。
+入力欄とボタンの名前だけが表示され、`inspect_result.txt`（Git対象外）にも保存されます。
+入力された中身・URLのクエリ・Cookie は書き出しません。
