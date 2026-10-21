@@ -3,6 +3,10 @@
 address = "localhost"
 port = 8501
 
+# 画面右上の「Deploy」など、外部サービスへの公開や開発用のメニューを出さない
+[client]
+toolbarMode = "viewer"
+
 # 利用状況の統計を外部に送らない
 [browser]
 gatherUsageStats = false

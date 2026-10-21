@@ -1,4 +1,7 @@
-"""登録した予定の保存と読み出し（data/plans.json。Git対象外）。画面と自動予約の両方から使う。"""
+"""登録した予定と設定の保存と読み出し（data/。Git対象外）。画面と自動予約の両方から使う。
+
+予定には登録した人（owner）を記録し、設定は人ごとのファイルに分ける。
+"""
 
 import json
 import uuid
@@ -6,7 +9,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 DATA_FILE = Path(__file__).parent / "data" / "plans.json"
-SETTINGS_FILE = Path(__file__).parent / "data" / "settings.json"
+SETTINGS_DIR = Path(__file__).parent / "data" / "settings"
+# 複数人対応の前の、本人1人用の設定ファイル
+LEGACY_SETTINGS_FILE = Path(__file__).parent / "data" / "settings.json"
 
 # 画面で変えられる設定の初期値
 DEFAULT_SETTINGS = {
@@ -51,13 +56,37 @@ def find_plan(plans: list[dict], plan_id: str) -> dict:
     raise SystemExit(f"予定 {plan_id} が見つかりません。画面で削除された可能性があります。")
 
 
-def booked_minutes_on(plans: list[dict], use_date: date, exclude_id: str | None = None) -> int:
-    """同じ利用日の「予約完了」の予定の合計時間（分）。"""
+def plans_of(plans: list[dict], owner: str) -> list[dict]:
+    return [p for p in plans if p.get("owner") == owner]
+
+
+def booked_minutes_on(plans: list[dict], use_date: date, exclude_id: str | None = None, owner: str | None = None) -> int:
+    """同じ利用日の「予約完了」の予定の合計時間（分）。owner を指定すると、その人の予定だけを数える。"""
     return sum(
         p["duration_min"]
         for p in plans
-        if p["use_date"] == use_date.isoformat() and p["status"] == STATUS_BOOKED and p["id"] != exclude_id
+        if p["use_date"] == use_date.isoformat()
+        and p["status"] == STATUS_BOOKED
+        and p["id"] != exclude_id
+        and (owner is None or p.get("owner") == owner)
     )
+
+
+def claim_legacy(admin: str) -> None:
+    """複数人対応の前に登録した予定（owner なし）と設定を、管理者のものにする。"""
+    plans = load_plans()
+    if any("owner" not in p for p in plans):
+        for p in plans:
+            p.setdefault("owner", admin)
+        save_plans(plans)
+    if LEGACY_SETTINGS_FILE.exists() and not _settings_file(admin).exists():
+        save_settings(admin, {**DEFAULT_SETTINGS, **json.loads(LEGACY_SETTINGS_FILE.read_text(encoding="utf-8"))})
+
+
+def delete_user_data(owner: str) -> None:
+    """アカウントを消すときに、その人の予定と設定も消す。"""
+    save_plans([p for p in load_plans() if p.get("owner") != owner])
+    _settings_file(owner).unlink(missing_ok=True)
 
 
 def mark_booked(plan_id: str, room: str, by: str) -> None:
@@ -80,12 +109,17 @@ def record_run(plan_id: str, at: datetime, result: str, full_rooms: list[str]) -
             return
 
 
-def load_settings() -> dict:
-    if not SETTINGS_FILE.exists():
+def _settings_file(owner: str) -> Path:
+    return SETTINGS_DIR / f"{owner}.json"
+
+
+def load_settings(owner: str) -> dict:
+    path = _settings_file(owner)
+    if not path.exists():
         return dict(DEFAULT_SETTINGS)
-    return {**DEFAULT_SETTINGS, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
+    return {**DEFAULT_SETTINGS, **json.loads(path.read_text(encoding="utf-8"))}
 
 
-def save_settings(settings: dict) -> None:
-    SETTINGS_FILE.parent.mkdir(exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_settings(owner: str, settings: dict) -> None:
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    _settings_file(owner).write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")

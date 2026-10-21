@@ -52,9 +52,9 @@ SEND_AFTER_OPEN = timedelta(seconds=2)
 COMPLETE_TITLE = "予約登録完了"
 
 
-def favorite_rooms() -> list[str]:
-    """画面で設定した部屋の順番を優先し、なければ local_settings.toml の favorite_rooms を使う。"""
-    if rooms := load_settings()["favorite_rooms"]:
+def favorite_rooms(user: str | None) -> list[str]:
+    """その人が画面で設定した部屋の順番を優先し、なければ local_settings.toml の favorite_rooms を使う。"""
+    if user and (rooms := load_settings(user)["favorite_rooms"]):
         return rooms
     if not LOCAL_SETTINGS_FILE.exists():
         return []
@@ -86,6 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--minutes", type=int, choices=DURATION_CHOICES_MIN, help="利用時間（分）")
     parser.add_argument("--practice", choices=[PRACTICE_SOLO, PRACTICE_ENSEMBLE], default=PRACTICE_SOLO)
     parser.add_argument("--yes", action="store_true", help="登録を押す前の確認をしない（全自動）")
+    parser.add_argument("--user", help="誰のログイン情報で予約するか（--plan-id のときは予定を登録した人）")
     args = parser.parse_args()
     if not args.plan_id and not (args.date and args.start and args.minutes):
         parser.error("--plan-id か、--date・--start・--minutes の3つを指定してください")
@@ -103,7 +104,10 @@ def apply_plan(args: argparse.Namespace) -> list[str]:
     args.minutes = plan["duration_min"]
     # 試す部屋は、予定で選んだ部屋（3階／TB）で決める
     args.practice = PRACTICE_ENSEMBLE if plan["room"] == ROOM_TB else PRACTICE_SOLO
-    total = plan.get("existing_min", 0) + booked_minutes_on(plans, args.date, exclude_id=plan["id"]) + args.minutes
+    # 予約は、予定を登録した本人のログイン情報で行う
+    args.user = plan.get("owner")
+    booked = booked_minutes_on(plans, args.date, exclude_id=plan["id"], owner=args.user)
+    total = plan.get("existing_min", 0) + booked + args.minutes
     if total > DAILY_LIMIT_MIN:
         raise SystemExit(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約しません。")
     return plan.get("members", [])
@@ -126,7 +130,7 @@ def main() -> None:
 def run(args: argparse.Namespace) -> None:
     plan_members = apply_plan(args) if args.plan_id else None
     # よく使う部屋の順番は、個人練習（3階の部屋）のときだけ使う
-    preferred = favorite_rooms() if args.practice == PRACTICE_SOLO else []
+    preferred = favorite_rooms(args.user) if args.practice == PRACTICE_SOLO else []
     rooms = candidates(args.practice, preferred, MAX_ROOMS_TO_TRY)
     for room in rooms:
         limit = MAX_MINUTES.get(ALL_ROOMS[room])
@@ -139,13 +143,14 @@ def run(args: argparse.Namespace) -> None:
     start_at = start_datetime(args.date, args.start)
     opens_at = booking_opens_at(end_datetime(start_at, args.minutes))
     send_at = opens_at + SEND_AFTER_OPEN
-    print(f"予約：{start_at:%Y-%m-%d %H:%M} から {args.minutes}分（{args.practice}）")
+    who = f"{args.user} の" if args.user else ""
+    print(f"{who}予約：{start_at:%Y-%m-%d %H:%M} から {args.minutes}分（{args.practice}）")
     print(f"試す部屋（この順に最大{MAX_ROOMS_TO_TRY}室）：{', '.join(rooms)}")
     print(f"予約可能日時：{opens_at:%Y-%m-%d %H:%M}")
     if datetime.now(TOKYO) < send_at - LOGIN_BEFORE_OPEN:
         wait_until(send_at - LOGIN_BEFORE_OPEN, "ログイン開始")
 
-    login_id, password = credentials.load()
+    login_id, password = credentials.load(args.user)
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="msedge", headless=False)
         page = browser.new_page()
