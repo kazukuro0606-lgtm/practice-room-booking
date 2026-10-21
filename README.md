@@ -92,12 +92,13 @@ python inspect_page.py
 ## 段階2-3：予約内容を入力し、確認画面で止める（練習モード）
 
 ```powershell
-python reserve_dryrun.py --event-id 159 --date 2026-10-28 --start 09:30 --minutes 60
+python reserve_dryrun.py --room E312 --date 2026-10-28 --start 09:30 --minutes 60
 ```
 
-- `--event-id`：部屋の番号（予約画面のアドレスの `event_id`）
+- `--room`：部屋の名前（3階の部屋か E452。番号は `rooms.py`）
+- `--use-type`：利用区分の表示名（省略すると「個人練習」）
 - `--minutes`：30・60・90・120・150・180 のいずれか
-- 自動でログインし、「個人練習」と利用時間を入力して確認画面まで進みます。
+- 自動でログインし、利用区分と利用時間を入力して確認画面まで進みます。
 - **確認画面の「登録」ボタンは押しません**（このプログラムには押す処理がありません）。Edgeを閉じると終了します。
 
 ## 部屋の番号（event_id）の一覧を調べる
