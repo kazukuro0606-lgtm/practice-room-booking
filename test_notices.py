@@ -18,9 +18,37 @@ PAGE_TEXT = """予約登録
 """
 
 
+# 2026-10-22 に練習モードで表示された、注意事項の次に「利用日時」が来る画面
+PAGE_TEXT_DATE_NEXT = """利用用途について
+必須
+
+
+「複数人利用 優先のお願い」を確認しました。
+
+｜
+【複数人利用 優先のお願い】
+利用用途が「個人練習」となっておりますが、この部屋は可能な限り「複数人」での利用を優先してください。
+個人での利用は極力控え、小練習室を利用するようご協力をお願いいたします。
+利用日時
+必須
+        2026年10月23日 21時00分 から
+
+＜ご利用時間を選択してください＞
+30分
+1時間
+同時利用者（学籍番号）
+必須
+"""
+
+
 class NoticesTest(unittest.TestCase):
     def test_approved_text_matches(self):
         self.assertTrue(notice_unchanged(PAGE_TEXT))
+
+    def test_approved_text_matches_when_date_field_comes_next(self):
+        self.assertTrue(notice_unchanged(PAGE_TEXT_DATE_NEXT))
+        changed = PAGE_TEXT_DATE_NEXT.replace("極力控え", "禁止とし")
+        self.assertFalse(notice_unchanged(changed))
 
     def test_changed_text_is_rejected(self):
         changed = PAGE_TEXT.replace("極力控え", "禁止とし")

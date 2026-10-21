@@ -10,9 +10,9 @@ APPROVED_E452_NOTICE = (
     "個人での利用は極力控え、小練習室を利用するようご協力をお願いいたします。"
 )
 
-# 注意事項の前後にある項目名
+# 注意事項の前後にある項目名。注意事項の次に来る項目は画面によって違うため、最初に見つかったところまでを注意事項とする
 E452_NOTICE_START = "利用用途について"
-E452_NOTICE_END = "同時利用者（学籍番号）"
+E452_NOTICE_ENDS = ("利用日時", "同時利用者（学籍番号）")
 
 # 画面の飾りや入力チェックの表示で、文面の一部ではないもの
 _NOISE = ("必須", "｜", "|", "値を入力してください")
@@ -24,15 +24,15 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
-def extract_between(page_text: str, start: str, end: str) -> str | None:
-    """画面の文字列から、start と end の間の部分を取り出す。見つからなければ None。"""
+def extract_between(page_text: str, start: str, ends: tuple[str, ...]) -> str | None:
+    """画面の文字列から、start と、その後で最初に現れる ends のいずれかとの間を取り出す。見つからなければ None。"""
     i = page_text.find(start)
     if i < 0:
         return None
-    j = page_text.find(end, i + len(start))
-    if j < 0:
+    positions = [j for end in ends if (j := page_text.find(end, i + len(start))) >= 0]
+    if not positions:
         return None
-    return page_text[i + len(start) : j]
+    return page_text[i + len(start) : min(positions)]
 
 
 NOTICE_OK = "ok"
@@ -42,7 +42,7 @@ NOTICE_CHANGED = "changed"  # 注意事項の欄はあるが、文面が承認�
 
 def notice_status(page_text: str) -> tuple[str, str]:
     """(状態, 画面で見つかった注意事項の文面) を返す。"""
-    found = extract_between(page_text, E452_NOTICE_START, E452_NOTICE_END)
+    found = extract_between(page_text, E452_NOTICE_START, E452_NOTICE_ENDS)
     if found is None:
         return NOTICE_MISSING, ""
     if normalize(found) == normalize(APPROVED_E452_NOTICE):
