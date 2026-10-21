@@ -1,0 +1,8 @@
+# localhost だけで待ち受け、外部（同じWi-Fiの他の端末を含む）からは接続させない
+[server]
+address = "localhost"
+port = 8501
+
+# 利用状況の統計を外部に送らない
+[browser]
+gatherUsageStats = false

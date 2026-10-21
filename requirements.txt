@@ -1,0 +1,2 @@
+streamlit>=1.40
+tzdata  # Windows で Asia/Tokyo を使うために必要
