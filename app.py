@@ -1,15 +1,12 @@
 """練習室の予約予定を登録する画面（PCの localhost で動き、Tailscale Serve 経由でスマホからも開く）。
 
 人ごとのアカウント（app_auth.py）でログインし、各自が自分の予定・設定・予約サイトのログイン情報だけを扱う。
-この画面自体は大学サイトに接続しない。「自動予約を起動」を押したときだけ、PC上の別ウィンドウで
-auto_reserve.py を起動し、予定を登録した本人のログイン情報で予約する。
+この画面自体は大学サイトに接続しない。「予約係に任せる」を押した予定は、PCで動いている予約係（scheduler.py）が
+予約可能日時に、予定を登録した本人のログイン情報で予約する。
 """
 
-import subprocess
-import sys
 import time as time_module
-from datetime import date, time
-from pathlib import Path
+from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 
@@ -23,9 +20,13 @@ from booking_rules import (
     ROOM_3F,
     ROOM_MAX_MIN,
     ROOM_TB,
+    TOKYO,
     check_plan,
 )
 from plans_store import (
+    AUTO_OFF,
+    AUTO_QUEUED,
+    AUTO_RUNNING,
     STATUS_BOOKED,
     STATUS_PLANNED,
     booked_minutes_on,
@@ -37,11 +38,14 @@ from plans_store import (
     plans_of,
     save_plans,
     save_settings,
+    scheduler_last_seen,
+    set_auto,
 )
 from rooms import ROOMS_3F
 
-APP_DIR = Path(__file__).parent
 MAX_LOGIN_FAILURES = 5
+# 予約係はこの間隔より短く「動いている印」を書く。これより古ければ止まっているとみなす
+SCHEDULER_TIMEOUT = timedelta(minutes=2)
 ROOMS = [ROOM_3F, ROOM_TB]
 PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
 
@@ -55,16 +59,9 @@ def fmt(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def launch_auto_reserve(plan_id: str, skip_confirm: bool) -> None:
-    """自動予約を新しいPowerShell（コンソール）ウィンドウで起動する。"""
-    command = [sys.executable, str(APP_DIR / "auto_reserve.py"), "--plan-id", plan_id]
-    if skip_confirm:
-        command.append("--yes")
-    subprocess.Popen(
-        command,
-        cwd=APP_DIR,
-        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
-    )
+def scheduler_running(now: datetime) -> bool:
+    last_seen = scheduler_last_seen()
+    return last_seen is not None and now - last_seen < SCHEDULER_TIMEOUT
 
 
 def update_own_plans(user: str, change) -> None:
@@ -155,23 +152,12 @@ with st.expander("自動予約の設定"):
         default=[r for r in settings["favorite_rooms"] if r in ROOMS_3F],
         help="選ばなかった部屋は番号順に続けて試します。1回の予約で試すのは最大5室です。",
     )
-    if admin:
-        skip_confirm = st.checkbox(
-            "確認なしで予約する（全自動）",
-            value=settings["skip_confirm"],
-            help="オフのときは、「登録」を押す前に、PCに開く自動予約のウィンドウで y の入力を求めます。",
-        )
-        if skip_confirm:
-            st.warning("全自動では、確認画面の内容を見ずに予約を送信します。")
-    else:
-        # 友達はPCのウィンドウで y を入力できないため、常に全自動
-        skip_confirm = True
-        st.caption("自動予約は、確認なし（全自動）で予約を送信します。登録する予定の内容をよく確認してください。")
+    # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
+    st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
     if st.button("設定を保存"):
-        save_settings(user, {"favorite_rooms": favorites, "skip_confirm": skip_confirm})
+        save_settings(user, {**settings, "favorite_rooms": favorites})
         settings = load_settings(user)
-        st.success("保存しました。これから起動する自動予約に反映されます。")
-skip_confirm_now = settings["skip_confirm"] if admin else True
+        st.success("保存しました。これから予約係が始める予約に反映されます。")
 
 # ---- 管理者：アカウントの管理 ----
 if admin:
@@ -295,7 +281,9 @@ my_plans = plans_of(load_plans(), user)
 if not my_plans:
     st.write("まだ予定はありません。")
 if not has_credentials:
-    st.warning("予約サイトのログイン情報が未保存なので、自動予約は起動できません。")
+    st.warning("予約サイトのログイン情報が未保存なので、予約係に任せられません。")
+if not scheduler_running(datetime.now(TOKYO)):
+    st.error("予約係が動いていません。任せた予定も、予約係が動くまで予約されません。予約係のPCで `python scheduler.py` を起動してください。")
 for p in my_plans:
     pid = p["id"]
     booked = p["status"] == STATUS_BOOKED
@@ -317,25 +305,35 @@ for p in my_plans:
                 st.rerun()
             continue
 
+        auto = p.get("auto", AUTO_OFF)
+        if auto is AUTO_QUEUED:
+            st.info("⏳ 予約係に任せています。予約可能日時の10分前に始め、時刻になったら予約します。")
+        elif auto == AUTO_RUNNING:
+            st.info("🔄 予約係が自動予約を実行中です。")
         total = p.get("existing_min", 0) + booked_minutes_on(my_plans, date.fromisoformat(p["use_date"]), pid)
         total += p["duration_min"]
         over = total > DAILY_LIMIT_MIN
         if over:
-            st.warning(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため自動予約できません。")
+            st.warning(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約係に任せられません。")
         col1, col2, col3 = st.columns(3)
-        if col1.button("自動予約を起動", key=f"auto{pid}", disabled=over or not has_credentials, type="primary"):
-            launch_auto_reserve(pid, skip_confirm_now)
-            mode = "全自動" if skip_confirm_now else "送信前に確認あり"
-            st.success(f"予約係のPCで自動予約を起動しました（{mode}）。予約可能日時になると予約します。")
+        if auto is AUTO_OFF:
+            if col1.button("予約係に任せる", key=f"auto{pid}", disabled=over or not has_credentials, type="primary"):
+                set_auto(pid, AUTO_QUEUED, owner=user)
+                st.rerun()
+        elif col1.button("任せるのをやめる", key=f"stop{pid}"):
+            # 実行中でも、予約を送る直前に取り消しを確かめて止まる
+            set_auto(pid, AUTO_OFF, owner=user)
+            st.rerun()
         if col2.button("手動で予約した → 完了にする", key=f"done{pid}"):
             def mark_done(mine, pid=pid):
                 for x in mine:
                     if x["id"] == pid:
-                        x.update(status=STATUS_BOOKED, booked_by="手動")
+                        x.update(status=STATUS_BOOKED, booked_by="手動", auto=AUTO_OFF)
             update_own_plans(user, mark_done)
             st.rerun()
-        if col3.button("削除", key=f"del{pid}"):
+        # 任せている間は、予約係が予約完了を書き込む先がなくならないよう、削除できない
+        if col3.button("削除", key=f"del{pid}", disabled=auto is not AUTO_OFF):
             delete_own_plan(user, pid)
             st.rerun()
 
-st.caption("自動予約が完了すると、この一覧が「予約完了（自動）」に変わります。表示が変わらないときは、ページを再読み込みしてください。")
+st.caption("予約係が予約を完了すると、この一覧が「予約完了（自動）」に変わります。表示が変わらないときは、ページを再読み込みしてください。")

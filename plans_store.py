@@ -22,6 +22,13 @@ DEFAULT_SETTINGS = {
 STATUS_PLANNED = "予定（未予約）"
 STATUS_BOOKED = "予約完了"
 
+# 予定の "auto"：予約係（scheduler.py）に任せているか
+AUTO_OFF = False  # 任せていない（または、予約係が1回試し終わった）
+AUTO_QUEUED = True  # 任せた。予約可能日時が近づいたら予約係が始める
+AUTO_RUNNING = "running"  # 予約係が自動予約を実行中
+
+HEARTBEAT_FILE = Path(__file__).parent / "data" / "scheduler.json"
+
 
 def load_plans() -> list[dict]:
     if not DATA_FILE.exists():
@@ -105,12 +112,43 @@ def record_run(plan_id: str, at: datetime, result: str, full_rooms: list[str]) -
     for plan in plans:
         if plan["id"] == plan_id:
             plan["last_run"] = {"at": at.strftime("%Y-%m-%d %H:%M:%S"), "result": result, "full_rooms": full_rooms}
+            # 1つの予定につき予約係が試すのは1回。結果が出たら「任せる」状態を外す
+            plan["auto"] = False
             save_plans(plans)
             return
 
 
 def _settings_file(owner: str) -> Path:
     return SETTINGS_DIR / f"{owner}.json"
+
+
+def set_auto(plan_id: str, value, owner: str | None = None) -> bool:
+    """予定の「任せる」状態を変える。owner を指定したときは、その人の予定だけを変える。変えたら True。"""
+    plans = load_plans()
+    for plan in plans:
+        if plan["id"] == plan_id and (owner is None or plan.get("owner") == owner):
+            plan["auto"] = value
+            save_plans(plans)
+            return True
+    return False
+
+
+def auto_state(plan_id: str):
+    for plan in load_plans():
+        if plan["id"] == plan_id:
+            return plan.get("auto", AUTO_OFF)
+    return AUTO_OFF
+
+
+def write_heartbeat(now: datetime) -> None:
+    HEARTBEAT_FILE.parent.mkdir(exist_ok=True)
+    HEARTBEAT_FILE.write_text(json.dumps({"last_seen": now.isoformat()}), encoding="utf-8")
+
+
+def scheduler_last_seen() -> datetime | None:
+    if not HEARTBEAT_FILE.exists():
+        return None
+    return datetime.fromisoformat(json.loads(HEARTBEAT_FILE.read_text(encoding="utf-8"))["last_seen"])
 
 
 def load_settings(owner: str) -> dict:

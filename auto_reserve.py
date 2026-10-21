@@ -32,7 +32,9 @@ from booking_rules import (
 )
 from inspect_page import safe_url
 from plans_store import (
+    AUTO_RUNNING,
     STATUS_BOOKED,
+    auto_state,
     booked_minutes_on,
     find_plan,
     load_plans,
@@ -87,7 +89,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--practice", choices=[PRACTICE_SOLO, PRACTICE_ENSEMBLE], default=PRACTICE_SOLO)
     parser.add_argument("--yes", action="store_true", help="登録を押す前の確認をしない（全自動）")
     parser.add_argument("--user", help="誰のログイン情報で予約するか（--plan-id のときは予定を登録した人）")
+    parser.add_argument(
+        "--unattended", action="store_true", help="予約係（scheduler.py）から起動する。全自動・Edgeを画面に出さない・終わったら閉じる"
+    )
     args = parser.parse_args()
+    if args.unattended:
+        args.yes = True
     if not args.plan_id and not (args.date and args.start and args.minutes):
         parser.error("--plan-id か、--date・--start・--minutes の3つを指定してください")
     return args
@@ -125,6 +132,10 @@ def main() -> None:
         if isinstance(e.code, str):
             record_run(args.plan_id, datetime.now(TOKYO), f"中止：{e.code}", [])
         raise
+    except Exception as e:
+        # 例外の文面に入力値が含まれる可能性があるので、記録するのは種類だけ
+        record_run(args.plan_id, datetime.now(TOKYO), f"エラーで中止（{type(e).__name__}）", [])
+        raise
 
 
 def run(args: argparse.Namespace) -> None:
@@ -152,12 +163,14 @@ def run(args: argparse.Namespace) -> None:
 
     login_id, password = credentials.load(args.user)
     with sync_playwright() as p:
-        browser = p.chromium.launch(channel="msedge", headless=False)
+        browser = p.chromium.launch(channel="msedge", headless=args.unattended)
         page = browser.new_page()
         page.goto(BASE_URL + "/login/")
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
         wait_until(send_at, "予約開始")
+        if args.unattended and args.plan_id and auto_state(args.plan_id) != AUTO_RUNNING:
+            raise SystemExit("待っている間に「予約係に任せる」が取り消されたため、予約しませんでした。")
 
         started_at = datetime.now(TOKYO)
         booked_room = None
@@ -202,8 +215,9 @@ def run(args: argparse.Namespace) -> None:
             if completed:
                 mark_booked(args.plan_id, booked_room, by="自動")
                 print("予定登録の画面で「予約完了」に切り替えました。")
-        print("確認できたら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
-        page.wait_for_event("close", timeout=0)
+        if not args.unattended:
+            print("確認できたら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
+            page.wait_for_event("close", timeout=0)
         browser.close()
 
 
@@ -211,6 +225,6 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        if "--plan-id" in sys.argv:
+        if "--plan-id" in sys.argv and "--unattended" not in sys.argv:
             # 画面から別ウィンドウで起動したときは、結果を読めるように閉じる前に待つ
             input("\nEnter を押すと、このウィンドウを閉じます。")
