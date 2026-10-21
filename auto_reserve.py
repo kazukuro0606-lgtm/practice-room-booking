@@ -36,6 +36,8 @@ MAX_ROOMS_TO_TRY = 5
 LOGIN_BEFORE_OPEN = timedelta(minutes=3)
 # サイトの時計とのずれに備えて、予約可能日時の少し後に送る
 SEND_AFTER_OPEN = timedelta(seconds=2)
+# 予約が完了したときの画面の見出し（2026-10-21 の本番テストで確認）
+COMPLETE_TITLE = "予約登録完了"
 
 
 def favorite_rooms() -> list[str]:
@@ -51,13 +53,14 @@ def wait_until(target: datetime, label: str) -> None:
     print()
 
 
-def register(page: Page) -> None:
-    """確認画面の「登録」を1回だけ押す。"""
+def register(page: Page) -> bool:
+    """確認画面の「登録」を1回だけ押し、完了画面になったかを返す。"""
     page.click("#register")
     try:
         page.wait_for_url(lambda u: CONFIRM_PATH not in u, timeout=PAGE_TIMEOUT_MS)
     except Exception:
         pass  # 画面が変わらなくても、押し直しはしない
+    return COMPLETE_TITLE in page.title()
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,6 +101,7 @@ def main() -> None:
         wait_until(send_at, "予約開始")
 
         booked_room = None
+        completed = False
         for room in rooms:
             print(f"{room} を試しています…")
             room_members = members if ALL_ROOMS[room] in NEEDS_MEMBERS else None
@@ -111,13 +115,16 @@ def main() -> None:
                 if answer.strip().lower() != "y":
                     print("予約を送信せずに終了します。")
                     break
-            register(page)
+            completed = register(page)
             booked_room = room
             break
 
-        if booked_room:
-            print(f"{booked_room} の「登録」を押しました。結果の画面：{page.title()}  {safe_url(page.url)}")
-            print("Edgeで予約が完了したか確認してください。予約内容の画面でも確認できます。")
+        if booked_room and completed:
+            print(f"予約が完了しました：{booked_room}　{start_at:%Y-%m-%d %H:%M} から {args.minutes}分")
+        elif booked_room:
+            print(f"{booked_room} の「登録」を押しましたが、完了画面になりませんでした。")
+            print(f"結果の画面：{page.title()}  {safe_url(page.url)}")
+            print("Edgeの画面と「予約内容」で、予約が入っているか確認してください。")
         else:
             print("予約は送信していません。")
         print("確認できたら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
