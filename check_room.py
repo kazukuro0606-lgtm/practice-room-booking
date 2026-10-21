@@ -7,11 +7,12 @@
 - 予約登録の画面が出たか（出ないときは、その日時が埋まっている・まだ予約できない等）
 - 入力欄（ラジオボタン・チェックボックス・文字欄・選択肢）と、必須かどうか
 - 選べる利用時間
-- 申し込み欄の文字（注意事項など）。入力欄の中身は書き出さない
+- 申し込み欄の文字（注意事項など）。入力欄の中身は書き出さず、学籍番号など5桁以上の数字は *** で伏せる
 結果は check_room_result.txt（Git対象外）にも保存する。--date と --start は、予約可能になっていて空いていそうな日時にする。
 """
 
 import argparse
+import re
 from datetime import date, time
 from pathlib import Path
 
@@ -25,13 +26,19 @@ from rooms import ROOM_IDS, VERIFIED_ROOMS, event_id_of, room_key, room_label
 
 RESULT_FILE = Path(__file__).parent / "check_room_result.txt"
 FORM_TAGS = ("select", "textarea")
-FORM_TYPES = ("radio", "checkbox")
+FORM_TYPES = ("radio", "checkbox", "text", "number", "email", "tel")
+# 申し込み欄には本人の学籍番号が表示されるため、5桁以上の数字の並びは伏せる
+LONG_NUMBER = re.compile(r"\d{5,}")
 # 申し込み欄の文字が長すぎるときは、ここまでで切る
 MAX_FORM_TEXT = 2000
 
 
 def unchecked_rooms() -> list[str]:
     return [r for r in ROOM_IDS if r not in VERIFIED_ROOMS]
+
+
+def mask_numbers(text: str) -> str:
+    return LONG_NUMBER.sub("***", text)
 
 
 def form_lines(page: Page) -> list[str]:
@@ -50,7 +57,7 @@ def form_lines(page: Page) -> list[str]:
     form = page.locator("form:has(#conf)").first
     text = form.inner_text() if form.count() else page.inner_text("body")
     lines.append("  [申し込み欄の文字]")
-    lines += ["    " + line for line in text[:MAX_FORM_TEXT].splitlines() if line.strip()]
+    lines += ["    " + mask_numbers(line) for line in text[:MAX_FORM_TEXT].splitlines() if line.strip()]
     return lines
 
 
