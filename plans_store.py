@@ -2,10 +2,17 @@
 
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 DATA_FILE = Path(__file__).parent / "data" / "plans.json"
+SETTINGS_FILE = Path(__file__).parent / "data" / "settings.json"
+
+# 画面で変えられる設定の初期値
+DEFAULT_SETTINGS = {
+    "favorite_rooms": [],  # 個人練習で先に試す3階の部屋（この順）
+    "skip_confirm": False,  # True なら「登録」を押す前の確認をしない（全自動）
+}
 
 STATUS_PLANNED = "予定（未予約）"
 STATUS_BOOKED = "予約完了"
@@ -61,3 +68,24 @@ def mark_booked(plan_id: str, room: str, by: str) -> None:
     plan["booked_room"] = room
     plan["booked_by"] = by
     save_plans(plans)
+
+
+def record_run(plan_id: str, at: datetime, result: str, full_rooms: list[str]) -> None:
+    """自動予約を実行した結果を予定に記録する（最新の1回分）。予定が削除されていたら何もしない。"""
+    plans = load_plans()
+    for plan in plans:
+        if plan["id"] == plan_id:
+            plan["last_run"] = {"at": at.strftime("%Y-%m-%d %H:%M:%S"), "result": result, "full_rooms": full_rooms}
+            save_plans(plans)
+            return
+
+
+def load_settings() -> dict:
+    if not SETTINGS_FILE.exists():
+        return dict(DEFAULT_SETTINGS)
+    return {**DEFAULT_SETTINGS, **json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))}
+
+
+def save_settings(settings: dict) -> None:
+    SETTINGS_FILE.parent.mkdir(exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")

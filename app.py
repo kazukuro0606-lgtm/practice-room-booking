@@ -21,7 +21,17 @@ from booking_rules import (
     ROOM_TB,
     check_plan,
 )
-from plans_store import STATUS_BOOKED, STATUS_PLANNED, booked_minutes_on, load_plans, new_id, save_plans
+from plans_store import (
+    STATUS_BOOKED,
+    STATUS_PLANNED,
+    booked_minutes_on,
+    load_plans,
+    load_settings,
+    new_id,
+    save_plans,
+    save_settings,
+)
+from rooms import ROOMS_3F
 
 APP_DIR = Path(__file__).parent
 ROOMS = [ROOM_3F, ROOM_TB]
@@ -37,10 +47,13 @@ def fmt(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def launch_auto_reserve(plan_id: str) -> None:
+def launch_auto_reserve(plan_id: str, skip_confirm: bool) -> None:
     """自動予約を新しいPowerShell（コンソール）ウィンドウで起動する。"""
+    command = [sys.executable, str(APP_DIR / "auto_reserve.py"), "--plan-id", plan_id]
+    if skip_confirm:
+        command.append("--yes")
     subprocess.Popen(
-        [sys.executable, str(APP_DIR / "auto_reserve.py"), "--plan-id", plan_id],
+        command,
         cwd=APP_DIR,
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
     )
@@ -49,6 +62,26 @@ def launch_auto_reserve(plan_id: str) -> None:
 st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
 st.title("練習室予約の予定登録")
 st.caption("自分のログインID・パスワードはここに入力しないでください（資格情報マネージャーに保存したものを使います）。")
+
+settings = load_settings()
+with st.expander("自動予約の設定"):
+    favorites = st.multiselect(
+        "個人練習で先に試す3階の部屋（選んだ順に試します）",
+        list(ROOMS_3F),
+        default=[r for r in settings["favorite_rooms"] if r in ROOMS_3F],
+        help="選ばなかった部屋は番号順に続けて試します。1回の予約で試すのは最大5室です。",
+    )
+    skip_confirm = st.checkbox(
+        "確認なしで予約する（全自動）",
+        value=settings["skip_confirm"],
+        help="オフのときは、「登録」を押す前に自動予約のウィンドウで y の入力を求めます。",
+    )
+    if skip_confirm:
+        st.warning("全自動では、確認画面の内容を見ずに予約を送信します。")
+    if st.button("設定を保存"):
+        save_settings({"favorite_rooms": favorites, "skip_confirm": skip_confirm})
+        settings = load_settings()
+        st.success("保存しました。これから起動する自動予約に反映されます。")
 
 st.header("1. 予定を入力")
 use_date = st.date_input("利用日", value=date.today())
@@ -129,6 +162,9 @@ for p in plans:
         st.write(f"{label}　{p['use_date']} {p['start']}〜{p['end']}　{p['room']}（{p['practice_type']}）")
         members_note = f"　同時利用者：{len(p['members'])}人" if p.get("members") else ""
         st.caption(f"予約可能：{p['opens_at']}　設備：{p['equipment'] or 'なし'}{members_note}")
+        if last := p.get("last_run"):
+            full = f"　埋まっていた部屋：{', '.join(last['full_rooms'])}" if last["full_rooms"] else ""
+            st.caption(f"前回の自動予約（{last['at']}）：{last['result']}{full}")
         if booked:
             if st.button("削除", key=f"del{p['id']}"):
                 save_plans([x for x in plans if x["id"] != p["id"]])
@@ -142,8 +178,9 @@ for p in plans:
             st.warning(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため自動予約できません。")
         col1, col2, col3 = st.columns(3)
         if col1.button("自動予約を起動", key=f"auto{p['id']}", disabled=over, type="primary"):
-            launch_auto_reserve(p["id"])
-            st.success("新しいウィンドウで自動予約を起動しました。予約可能日時まで、そのウィンドウを閉じずにお待ちください。")
+            launch_auto_reserve(p["id"], settings["skip_confirm"])
+            mode = "全自動" if settings["skip_confirm"] else "送信前に確認あり"
+            st.success(f"新しいウィンドウで自動予約を起動しました（{mode}）。予約可能日時まで、そのウィンドウを閉じずにお待ちください。")
         if col2.button("手動で予約した → 完了にする", key=f"done{p['id']}"):
             for x in plans:
                 if x["id"] == p["id"]:

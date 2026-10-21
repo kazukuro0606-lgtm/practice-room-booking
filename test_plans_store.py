@@ -1,10 +1,20 @@
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import plans_store
-from plans_store import STATUS_BOOKED, STATUS_PLANNED, booked_minutes_on, load_plans, mark_booked, save_plans
+from plans_store import (
+    STATUS_BOOKED,
+    STATUS_PLANNED,
+    booked_minutes_on,
+    load_plans,
+    load_settings,
+    mark_booked,
+    record_run,
+    save_plans,
+    save_settings,
+)
 
 
 def plan(pid, use_date, minutes, status):
@@ -15,6 +25,7 @@ class PlansStoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         plans_store.DATA_FILE = Path(self.tmp.name) / "data" / "plans.json"
+        plans_store.SETTINGS_FILE = Path(self.tmp.name) / "data" / "settings.json"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -40,6 +51,17 @@ class PlansStoreTest(unittest.TestCase):
         saved = {p["id"]: p for p in load_plans()}
         self.assertEqual(saved["x"]["status"], STATUS_BOOKED)
         self.assertEqual(saved["x"]["booked_room"], "E320")
+
+    def test_record_run_and_settings(self):
+        save_plans([plan("x", "2026-10-26", 60, STATUS_PLANNED)])
+        record_run("x", datetime(2026, 10, 19, 18, 0, 2), "空きなし", ["E320", "E321"])
+        record_run("deleted", datetime(2026, 10, 19, 18, 0, 2), "空きなし", [])  # 消えた予定は無視
+        run = load_plans()[0]["last_run"]
+        self.assertEqual(run["full_rooms"], ["E320", "E321"])
+        self.assertEqual(run["at"], "2026-10-19 18:00:02")
+        self.assertEqual(load_settings(), {"favorite_rooms": [], "skip_confirm": False})
+        save_settings({"favorite_rooms": ["E330"], "skip_confirm": True})
+        self.assertEqual(load_settings()["favorite_rooms"], ["E330"])
 
 
 if __name__ == "__main__":

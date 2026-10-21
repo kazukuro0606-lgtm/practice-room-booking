@@ -24,17 +24,26 @@ from booking_rules import (
     DURATION_CHOICES_MIN,
     PRACTICE_ENSEMBLE,
     PRACTICE_SOLO,
+    ROOM_TB,
     TOKYO,
     booking_opens_at,
     end_datetime,
     start_datetime,
 )
 from inspect_page import safe_url
-from plans_store import STATUS_BOOKED, booked_minutes_on, find_plan, load_plans, mark_booked
+from plans_store import (
+    STATUS_BOOKED,
+    booked_minutes_on,
+    find_plan,
+    load_plans,
+    load_settings,
+    mark_booked,
+    record_run,
+)
 from reserve_dryrun import BASE_URL, CONFIRM_PATH, PAGE_TIMEOUT_MS, NotReached, add_url, ask_members, fill_until_confirm
 from rooms import ALL_ROOMS, MAX_MINUTES, NEEDS_MEMBERS, candidates
 
-SETTINGS_FILE = Path(__file__).parent / "local_settings.toml"
+LOCAL_SETTINGS_FILE = Path(__file__).parent / "local_settings.toml"
 MAX_ROOMS_TO_TRY = 5
 LOGIN_BEFORE_OPEN = timedelta(minutes=3)
 # サイトの時計とのずれに備えて、予約可能日時の少し後に送る
@@ -44,9 +53,12 @@ COMPLETE_TITLE = "予約登録完了"
 
 
 def favorite_rooms() -> list[str]:
-    if not SETTINGS_FILE.exists():
+    """画面で設定した部屋の順番を優先し、なければ local_settings.toml の favorite_rooms を使う。"""
+    if rooms := load_settings()["favorite_rooms"]:
+        return rooms
+    if not LOCAL_SETTINGS_FILE.exists():
         return []
-    return tomllib.loads(SETTINGS_FILE.read_text(encoding="utf-8")).get("favorite_rooms", [])
+    return tomllib.loads(LOCAL_SETTINGS_FILE.read_text(encoding="utf-8")).get("favorite_rooms", [])
 
 
 def wait_until(target: datetime, label: str) -> None:
@@ -89,7 +101,8 @@ def apply_plan(args: argparse.Namespace) -> list[str]:
     args.date = date.fromisoformat(plan["use_date"])
     args.start = time.fromisoformat(plan["start"])
     args.minutes = plan["duration_min"]
-    args.practice = plan["practice_type"]
+    # 試す部屋は、予定で選んだ部屋（3階／TB）で決める
+    args.practice = PRACTICE_ENSEMBLE if plan["room"] == ROOM_TB else PRACTICE_SOLO
     total = plan.get("existing_min", 0) + booked_minutes_on(plans, args.date, exclude_id=plan["id"]) + args.minutes
     if total > DAILY_LIMIT_MIN:
         raise SystemExit(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約しません。")
@@ -98,8 +111,23 @@ def apply_plan(args: argparse.Namespace) -> list[str]:
 
 def main() -> None:
     args = parse_args()
+    if not args.plan_id:
+        run(args)
+        return
+    try:
+        run(args)
+    except SystemExit as e:
+        # 途中で止まった理由も予定に記録して、画面で見られるようにする
+        if isinstance(e.code, str):
+            record_run(args.plan_id, datetime.now(TOKYO), f"中止：{e.code}", [])
+        raise
+
+
+def run(args: argparse.Namespace) -> None:
     plan_members = apply_plan(args) if args.plan_id else None
-    rooms = candidates(args.practice, favorite_rooms(), MAX_ROOMS_TO_TRY)
+    # よく使う部屋の順番は、個人練習（3階の部屋）のときだけ使う
+    preferred = favorite_rooms() if args.practice == PRACTICE_SOLO else []
+    rooms = candidates(args.practice, preferred, MAX_ROOMS_TO_TRY)
     for room in rooms:
         limit = MAX_MINUTES.get(ALL_ROOMS[room])
         if limit and args.minutes > limit:
@@ -126,8 +154,11 @@ def main() -> None:
             login(page, login_id, password)
         wait_until(send_at, "予約開始")
 
+        started_at = datetime.now(TOKYO)
         booked_room = None
         completed = False
+        declined = False
+        full_rooms = []
         for room in rooms:
             print(f"{room} を試しています…")
             room_members = members if ALL_ROOMS[room] in NEEDS_MEMBERS else None
@@ -135,27 +166,37 @@ def main() -> None:
                 fill_until_confirm(page, add_url(ALL_ROOMS[room], args.date, args.start), args.minutes, members=room_members)
             except NotReached:
                 print(f"  {room} は確認画面まで進めませんでした（埋まっている可能性があります）。")
+                full_rooms.append(room)
                 continue
             if not args.yes:
                 answer = input(f"  {room} の確認画面です。Edgeで内容を確認し、予約するなら y と入力して Enter：")
                 if answer.strip().lower() != "y":
                     print("予約を送信せずに終了します。")
+                    declined = True
                     break
             completed = register(page)
             booked_room = room
             break
 
         if booked_room and completed:
+            result = f"予約完了（{booked_room}）"
             print(f"予約が完了しました：{booked_room}　{start_at:%Y-%m-%d %H:%M} から {args.minutes}分")
-            if args.plan_id:
-                mark_booked(args.plan_id, booked_room, by="自動")
-                print("予定登録の画面で「予約完了」に切り替えました。")
         elif booked_room:
+            result = f"{booked_room} で登録を押したが、完了画面にならなかった（要確認）"
             print(f"{booked_room} の「登録」を押しましたが、完了画面になりませんでした。")
             print(f"結果の画面：{page.title()}  {safe_url(page.url)}")
             print("Edgeの画面と「予約内容」で、予約が入っているか確認してください。")
-        else:
+        elif declined:
+            result = "確認画面で送信をやめた"
             print("予約は送信していません。")
+        else:
+            result = f"空きなし（{len(full_rooms)}室とも確認画面まで進めなかった）"
+            print(f"試した{len(full_rooms)}室とも予約できませんでした。予約は送信していません。")
+        if args.plan_id:
+            record_run(args.plan_id, started_at, result, full_rooms)
+            if completed:
+                mark_booked(args.plan_id, booked_room, by="自動")
+                print("予定登録の画面で「予約完了」に切り替えました。")
         print("確認できたら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
         page.wait_for_event("close", timeout=0)
         browser.close()
