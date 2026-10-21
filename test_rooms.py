@@ -33,7 +33,9 @@ class RoomsTest(unittest.TestCase):
         approved = usable_rooms(True)
         for room in ("E215", "E312", "E412", "E441", "E452"):
             self.assertIn(room, approved)
-        self.assertNotIn("E313", approved)  # 担当教員名が必須なので、まだ使わない
+        self.assertNotIn("E313", approved)  # 担当教員名を設定していないと使えない
+        self.assertIn("E313", usable_rooms(True, has_teacher=True))
+        self.assertNotIn("E313", usable_rooms(False, has_teacher=True))  # 注意事項の承認も必要
 
     def test_defaults_and_legacy_favorites(self):
         approved = {"approved_notices": [NOTICE_VERSION]}
@@ -53,6 +55,8 @@ class RoomsTest(unittest.TestCase):
         to_try, _ = rooms_for_plan(["E452"], 120, True)
         self.assertEqual(to_try, ["E452"])
         self.assertEqual(rooms_for_plan(["E452", "E320"], 60, False)[0], ["E320"])  # 承認を取り消した後
+        self.assertEqual(rooms_for_plan(["E313", "E320"], 60, True)[0], ["E320"])
+        self.assertEqual(rooms_for_plan(["E313", "E320"], 60, True, has_teacher=True)[0], ["E313", "E320"])
         self.assertTrue(needs_members(to_try))
         self.assertFalse(needs_members(["E320"]))
 

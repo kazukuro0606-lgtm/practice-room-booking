@@ -46,6 +46,7 @@ from rooms import (
     MAX_ROOMS_TO_TRY,
     NEEDS_MEMBERS,
     NOTICE_ROOMS,
+    TEACHER_ROOMS,
     event_id_of,
     needs_members,
     notice_approved,
@@ -68,6 +69,11 @@ def chosen_rooms(user: str | None, practice: str) -> list[str]:
 def approved_by(user: str | None) -> bool:
     """予約する本人が、注意事項の今の文面を承認しているか（ユーザーなしで直接動かすときは、動かした本人が承認したとみなす）。"""
     return notice_approved(load_settings(user)) if user else True
+
+
+def teacher_of(user: str | None) -> str | None:
+    """予約する本人が設定した担当教員名（E313 で使う）。"""
+    return (load_settings(user).get("teacher_name") or None) if user else None
 
 
 def wait_until(target: datetime, label: str) -> None:
@@ -157,7 +163,10 @@ def run(args: argparse.Namespace) -> None:
     approved = approved_by(args.user)
     if not approved and (unapproved := [r for r in chosen if r in NOTICE_ROOMS]):
         print(f"注意事項を承認していないため試さない部屋：{', '.join(unapproved)}")
-    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved)
+    teacher = teacher_of(args.user)
+    if not teacher and (no_teacher := [r for r in chosen if r in TEACHER_ROOMS]):
+        print(f"担当教員名を設定していないため試さない部屋：{', '.join(no_teacher)}")
+    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved, has_teacher=bool(teacher))
     if too_long:
         print(f"利用時間が長すぎるため試さない部屋：{', '.join(too_long)}")
     if not rooms:
@@ -195,8 +204,15 @@ def run(args: argparse.Namespace) -> None:
         for room in rooms:
             print(f"{room} を試しています…")
             room_members = members if room in NEEDS_MEMBERS else None
+            room_teacher = teacher if room in TEACHER_ROOMS else None
             try:
-                fill_until_confirm(page, add_url(event_id_of(room), args.date, args.start), args.minutes, members=room_members)
+                fill_until_confirm(
+                    page,
+                    add_url(event_id_of(room), args.date, args.start),
+                    args.minutes,
+                    members=room_members,
+                    teacher=room_teacher,
+                )
             except NotReached:
                 print(f"  {room} は確認画面まで進めませんでした（埋まっている可能性があります）。")
                 full_rooms.append(room)

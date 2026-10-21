@@ -15,7 +15,7 @@ import credentials
 from auto_login import ALLOWED_HOST, LOGIN_PATH, login
 from booking_rules import DURATION_CHOICES_MIN, TOKYO, booking_opens_at, end_datetime, start_datetime
 from notices import NOTICE_CHANGED, NOTICE_MISSING, notice_status
-from rooms import NEEDS_MEMBERS, event_id_of, max_minutes, room_key
+from rooms import NEEDS_MEMBERS, TEACHER_ROOMS, event_id_of, max_minutes, room_key
 
 BASE_URL = f"https://{ALLOWED_HOST}/senzoku"
 CONFIRM_PATH = "/senzoku/reserve/add_conf"
@@ -40,13 +40,31 @@ def add_url(event_id: int, use_date: date, start: time, base_url: str = BASE_URL
     return f"{base_url}/reserve/add?{query}"
 
 
+TEACHER_LABEL = "担当教員名"
+
+
+def teacher_field(page: Page):
+    """「担当教員名」の文字欄。項目名と欄が結びついていない画面もあるため、項目名の後ろの最初の文字欄も探す。"""
+    field = page.get_by_label(TEACHER_LABEL)
+    if field.count() == 0:
+        field = page.locator(
+            f"xpath=//*[contains(normalize-space(text()), '{TEACHER_LABEL}')]/following::input[@type='text' or not(@type)][1]"
+        )
+    return field.first if field.count() else None
+
+
 def fill_until_confirm(
-    page: Page, url: str, minutes: int, use_type: str = DEFAULT_USE_TYPE, members: list[str] | None = None
+    page: Page,
+    url: str,
+    minutes: int,
+    use_type: str = DEFAULT_USE_TYPE,
+    members: list[str] | None = None,
+    teacher: str | None = None,
 ) -> None:
     """予約登録画面に入力して「確認」まで進む。確認画面の登録ボタンは押さない。
 
-    members を渡したとき（E452）は、注意事項が承認済みの文面のままか確かめてから同意し、
-    同時利用者の学籍番号を入力する。
+    members を渡したとき（注意事項のある部屋）は、注意事項が承認済みの文面のままか確かめてから同意し、
+    同時利用者の学籍番号を入力する。teacher を渡したとき（E313）は、担当教員名も入力する。
     """
     page.goto(url)
     if urlsplit(page.url).hostname != urlsplit(url).hostname:
@@ -59,11 +77,20 @@ def fill_until_confirm(
         if status == NOTICE_CHANGED:
             print("画面の注意事項：\n" + found.strip())
             raise SystemExit("注意事項の文面が、承認したものから変わっています。同意せずに中止しました。Edgeで文面を確認してください。")
+    field = None
+    if teacher is not None:
+        field = teacher_field(page)
+        if field is None:
+            if page.locator("#conf").count() == 0:
+                raise NotReached()  # 予約登録の画面が出ていない
+            raise SystemExit("「担当教員名」の欄が見つかりませんでした。画面の作りが変わった可能性があります。")
     try:
         page.get_by_label(use_type, exact=True).check()
         if members is not None:
             page.check("#value_24")
             page.fill("#value_25", "\n".join(members))
+        if field is not None:
+            field.fill(teacher)
         page.select_option("select[name='datetime[usetime]']", label=USETIME_LABELS[minutes])
         page.click("#conf")
         page.wait_for_url(lambda u: CONFIRM_PATH in u, timeout=PAGE_TIMEOUT_MS)
@@ -86,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", type=time.fromisoformat, required=True, help="開始時刻（例：09:30）")
     parser.add_argument("--minutes", type=int, choices=DURATION_CHOICES_MIN, required=True, help="利用時間（分）")
     parser.add_argument("--use-type", default=DEFAULT_USE_TYPE, help="利用区分の表示名（初期値：個人練習）")
+    parser.add_argument("--teacher", help="担当教員名（E313 で必須。該当しない場合は AA）")
     return parser.parse_args()
 
 
@@ -104,6 +132,8 @@ def main() -> None:
     args = parse_args()
     if args.minutes > max_minutes(args.room):
         raise SystemExit(f"この部屋の利用時間は{max_minutes(args.room)}分までです。")
+    if args.room in TEACHER_ROOMS and not args.teacher:
+        raise SystemExit("この部屋は担当教員名が必須です。--teacher で指定してください（該当しない場合は AA）。")
     members = ask_members() if args.room in NEEDS_MEMBERS else None
     start_at = start_datetime(args.date, args.start)
     opens_at = booking_opens_at(end_datetime(start_at, args.minutes))
@@ -118,7 +148,7 @@ def main() -> None:
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
         try:
-            fill_until_confirm(page, add_url(event_id_of(args.room), args.date, args.start), args.minutes, args.use_type, members)
+            fill_until_confirm(page, add_url(event_id_of(args.room), args.date, args.start), args.minutes, args.use_type, members, args.teacher)
         except NotReached:
             raise SystemExit(NOT_REACHED_MESSAGE) from None
         print("確認画面まで進みました。予約はまだ完了していません（登録ボタンは押していません）。")

@@ -186,6 +186,7 @@ with st.expander("注意事項の承認（" + ("承認済み" if approved else "
 
 # ---- 自動予約の設定 ----
 my_rooms = rooms_setting(settings)
+has_teacher = bool(settings.get("teacher_name"))
 with st.expander("自動予約の設定（使う部屋）"):
     st.caption(
         f"練習の種類ごとに、使う部屋を**試したい順に**選んでください。1回の予約で、上から最大{MAX_ROOMS_TO_TRY}室を試します。"
@@ -195,15 +196,20 @@ with st.expander("自動予約の設定（使う部屋）"):
     for practice in PRACTICE_TYPES:
         chosen[practice] = st.multiselect(
             f"{practice}で使う部屋（選んだ順に試します）",
-            usable_rooms(approved),
+            usable_rooms(approved, has_teacher),
             default=my_rooms[practice],
             format_func=room_label,
             key=f"rooms_{practice}",
         )
+    teacher_name = st.text_input(
+        "担当教員名（E313 の予約で必須。主科の担当教員名、該当しない場合は AA）",
+        value=settings.get("teacher_name", ""),
+        help="設定すると、注意事項を承認している人は E313 も選べるようになります（保存してから選んでください）。",
+    )
     # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
     st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
     if st.button("設定を保存"):
-        save_settings(user, {**settings, "rooms": chosen})
+        save_settings(user, {**settings, "rooms": chosen, "teacher_name": teacher_name.strip()})
         settings = load_settings(user)
         my_rooms = rooms_setting(settings)
         st.success("保存しました。これから登録する予定に使われます（登録済みの予定の部屋は変わりません）。")
@@ -268,7 +274,7 @@ start_time = st.selectbox(
 )
 duration = st.radio("利用時間", DURATION_CHOICES_MIN, format_func=duration_label, horizontal=True)
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
-plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration, approved)
+plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration, approved, has_teacher)
 members_text = ""
 if needs_members(plan_rooms):
     members_text = st.text_area(
