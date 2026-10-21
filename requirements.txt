@@ -3,3 +3,5 @@ streamlit>=1.40
 tzdata
 # Browser automation (uses the Edge already installed on Windows)
 playwright>=1.48
+# Stores the login ID and password in Windows Credential Manager
+keyring

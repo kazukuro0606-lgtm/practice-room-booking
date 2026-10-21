@@ -74,3 +74,17 @@ python inspect_page.py
 Edgeでログイン画面を表示し（学籍番号・パスワードは入力しない）、PowerShellに戻って Enter を押します。
 入力欄とボタンの名前だけが表示され、`inspect_result.txt`（Git対象外）にも保存されます。
 入力された中身・URLのクエリ・Cookie は書き出しません。
+
+## 段階2-2：自動ログイン（予約の入力・送信はしない）
+
+ログインIDとパスワードは Windows の資格情報マネージャーに保存します（ファイル・Gitには残りません）。
+
+```powershell
+python -m pip install -r requirements.txt
+python credentials.py save
+python auto_login.py
+```
+
+- `credentials.py save`：ログインIDとパスワードを入力して保存します。パスワードは入力しても表示されません。
+- `auto_login.py`：Edgeを開いて自動でログインします。ログイン情報は `www4.revn.jp` のページにだけ入力します。
+- 保存したログイン情報を消すとき：`python credentials.py delete`
