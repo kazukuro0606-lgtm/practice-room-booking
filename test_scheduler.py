@@ -63,6 +63,13 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(load_plans()[0]["auto"], AUTO_RUNNING)
         self.assertEqual(plans_store.scheduler_last_seen(), now)
 
+    def test_refuses_to_start_when_another_is_running(self):
+        now = datetime(2026, 10, 22, 15, 0, 0, tzinfo=TOKYO)
+        self.assertFalse(scheduler.already_running(now))  # 一度も動いていない
+        plans_store.write_heartbeat(now)
+        self.assertTrue(scheduler.already_running(now.replace(minute=1)))  # 1分前に動いている印
+        self.assertFalse(scheduler.already_running(now.replace(minute=2)))  # 2分前なら止まっている
+
     def test_requeued_plan_waits_for_previous_run(self):
         save_plans([plan("p", AUTO_QUEUED)])  # 取り消し→任せ直しされた状態
         launched = []

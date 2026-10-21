@@ -16,12 +16,22 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from booking_rules import TOKYO, booking_opens_at, end_datetime, start_datetime
-from plans_store import AUTO_QUEUED, AUTO_RUNNING, STATUS_PLANNED, load_plans, set_auto, write_heartbeat
+from plans_store import (
+    AUTO_QUEUED,
+    AUTO_RUNNING,
+    STATUS_PLANNED,
+    load_plans,
+    scheduler_last_seen,
+    set_auto,
+    write_heartbeat,
+)
 
 APP_DIR = Path(__file__).parent
 LOG_DIR = APP_DIR / "data" / "logs"
 POLL_SECONDS = 30
 LAUNCH_BEFORE_OPEN = timedelta(minutes=10)
+# 「動いている印」がこれより新しければ、ほかの予約係が動いているとみなす
+ALREADY_RUNNING_WINDOW = timedelta(seconds=POLL_SECONDS * 3)
 
 
 def opens_at(plan: dict) -> datetime:
@@ -67,7 +77,18 @@ def tick(now: datetime, running: dict) -> None:
             print(f"{now:%m/%d %H:%M:%S} {plan.get('owner', '')} の予定 {plan['id']}（{plan['use_date']} {plan['start']}）の自動予約を始めました。")
 
 
+def already_running(now: datetime) -> bool:
+    """ほかの予約係が動いているか（2つ動くと、同じ予定を二重に予約するおそれがある）。"""
+    last_seen = scheduler_last_seen()
+    return last_seen is not None and now - last_seen < ALREADY_RUNNING_WINDOW
+
+
 def main() -> None:
+    if already_running(datetime.now(TOKYO)):
+        raise SystemExit(
+            "予約係はすでに動いています（PCの起動時に自動で始まった予約係がある可能性があります）。"
+            "このウィンドウは閉じて構いません。止めたばかりのときは、2分ほど待ってから起動し直してください。"
+        )
     print("予約係を始めました。このウィンドウは閉じずに、PCをスリープさせないでください。止めるときは Ctrl + C。")
     running: dict[str, subprocess.Popen] = {}
     while True:

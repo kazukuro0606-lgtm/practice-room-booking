@@ -196,3 +196,15 @@ python check_room.py --date 2026-10-28 --start 09:00 --room E441 E442
 - 部屋ごとに予約登録の画面を開き（Edgeは画面に出さない）、入力欄・選べる利用時間・申し込み欄の文字（注意事項など）を書き出します。**何も入力せず、ボタンも押しません。**
 - `--date` と `--start` は、予約可能になっていて空いていそうな日時にします。「予約登録の画面が出ませんでした」と出た部屋は、別の日時で調べ直します。
 - 結果は `check_room_result.txt`（Git対象外）にも保存されます。
+
+## Windows にサインインしたら自動で始める
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_startup.ps1
+```
+
+- スタートアップフォルダ（`shell:startup`）にショートカット `practice-room-booking` を作ります。次回のサインインから、予約係と予定登録の画面が最小化したウィンドウで自動的に始まります。
+- やめるとき：`powershell -ExecutionPolicy Bypass -File .\uninstall_startup.ps1`
+- 動くのは Windows にサインインした後です。PC の電源を入れただけ（サインイン前）では始まりません。
+- 予約係がすでに動いているときに、もう1つ予約係を起動すると、「予約係はすでに動いています」と表示して止まります（同じ予定を二重に予約しないため）。
+- スリープしないように、「設定 → システム → 電源」でスリープしない設定にしておいてください。
