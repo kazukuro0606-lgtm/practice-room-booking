@@ -42,7 +42,16 @@ from plans_store import (
     record_run,
 )
 from reserve_dryrun import BASE_URL, CONFIRM_PATH, PAGE_TIMEOUT_MS, NotReached, add_url, ask_members, fill_until_confirm
-from rooms import MAX_ROOMS_TO_TRY, NEEDS_MEMBERS, event_id_of, needs_members, rooms_for_plan, rooms_setting
+from rooms import (
+    MAX_ROOMS_TO_TRY,
+    NEEDS_MEMBERS,
+    NOTICE_ROOMS,
+    event_id_of,
+    needs_members,
+    notice_approved,
+    rooms_for_plan,
+    rooms_setting,
+)
 
 LOGIN_BEFORE_OPEN = timedelta(minutes=3)
 # サイトの時計とのずれに備えて、予約可能日時の少し後に送る
@@ -54,6 +63,11 @@ COMPLETE_TITLE = "予約登録完了"
 def chosen_rooms(user: str | None, practice: str) -> list[str]:
     """その人が設定した、練習の種類ごとの部屋（設定がなければ初期値）。"""
     return rooms_setting(load_settings(user) if user else {})[practice]
+
+
+def approved_by(user: str | None) -> bool:
+    """予約する本人が、注意事項の今の文面を承認しているか（ユーザーなしで直接動かすときは、動かした本人が承認したとみなす）。"""
+    return notice_approved(load_settings(user)) if user else True
 
 
 def wait_until(target: datetime, label: str) -> None:
@@ -139,7 +153,11 @@ def main() -> None:
 
 def run(args: argparse.Namespace) -> None:
     plan_members = apply_plan(args) if args.plan_id else None
-    rooms, too_long = rooms_for_plan(getattr(args, "rooms", None) or chosen_rooms(args.user, args.practice), args.minutes)
+    chosen = getattr(args, "rooms", None) or chosen_rooms(args.user, args.practice)
+    approved = approved_by(args.user)
+    if not approved and (unapproved := [r for r in chosen if r in NOTICE_ROOMS]):
+        print(f"注意事項を承認していないため試さない部屋：{', '.join(unapproved)}")
+    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved)
     if too_long:
         print(f"利用時間が長すぎるため試さない部屋：{', '.join(too_long)}")
     if not rooms:

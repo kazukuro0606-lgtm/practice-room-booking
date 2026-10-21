@@ -4,6 +4,7 @@
 """
 
 from booking_rules import PRACTICE_ENSEMBLE, PRACTICE_SOLO
+from notices import NOTICE_VERSION
 
 ROOM_IDS = {
     # 2階
@@ -26,15 +27,22 @@ ROOM_IDS = {
 # 部屋名の後ろに付いている楽器の印
 ROOM_NOTES = {"E412": "OB.FG.", "E432": "CL.", "E441": "SX.", "E442": "TP.", "E451": "HR.", "E452": "TB."}
 
-# 予約画面の作りを確かめた部屋だけを、自動予約に使える
-# （2階：E224 で練習モードを確認、3階：本番で予約済み、E452：注意事項と同時利用者に対応して本番で予約済み）
-_FLOOR_2 = [r for r in ROOM_IDS if r.startswith("E2")]
+# 予約画面の作りを確かめた部屋だけを、自動予約に使える（check_room.py で 2026-10-22 に調べた結果）
 _FLOOR_3_SOLO = [r for r in ROOM_IDS if r.startswith("E3") and r not in ("E312", "E313")]
-VERIFIED_ROOMS = set(_FLOOR_2) | set(_FLOOR_3_SOLO) | {"E452"}
+# ふつうの部屋（ラベル Small）：注意事項なし、3時間まで
+PLAIN_ROOMS = (
+    {r for r in ROOM_IDS if r.startswith("E2") and r != "E215"}
+    | set(_FLOOR_3_SOLO)
+    | {f"E4{n}" for n in range(20, 31)}
+)
+# 注意事項「複数人利用 優先のお願い」がある部屋（ラベル Medium／Large）：同時利用者が必須、2時間まで
+NOTICE_ROOMS = {"E215", "E312", "E412", "E414", "E415", "E432", "E441", "E442", "E451", "E452"}
+# E313 は「担当教員名」も必須なので、まだ自動予約に使わない
+VERIFIED_ROOMS = PLAIN_ROOMS | NOTICE_ROOMS
 
 # 部屋ごとの決まり
-MAX_MINUTES = {"E452": 120}  # 予約サイトで選べる利用時間の上限（書いていない部屋は3時間）
-NEEDS_MEMBERS = {"E452"}  # 注意事項の確認と同時利用者の入力が必須
+MAX_MINUTES = {r: 120 for r in NOTICE_ROOMS}  # 予約サイトで選べる利用時間の上限（書いていない部屋は3時間）
+NEEDS_MEMBERS = NOTICE_ROOMS  # 注意事項の確認と同時利用者の入力が必須
 
 # 設定していない人が使う部屋（この順に試す）
 DEFAULT_ROOMS = {PRACTICE_SOLO: _FLOOR_3_SOLO, PRACTICE_ENSEMBLE: ["E452"]}
@@ -59,9 +67,14 @@ def room_label(room: str) -> str:
     return f"{room}室({note})" if note else f"{room}室"
 
 
-def usable_rooms() -> list[str]:
-    """自動予約に使える部屋（一覧の順）。"""
-    return [r for r in ROOM_IDS if r in VERIFIED_ROOMS]
+def usable_rooms(approved: bool) -> list[str]:
+    """自動予約に使える部屋（一覧の順）。注意事項のある部屋は、その人が文面を承認しているときだけ。"""
+    return [r for r in ROOM_IDS if r in PLAIN_ROOMS or (approved and r in NOTICE_ROOMS)]
+
+
+def notice_approved(settings: dict) -> bool:
+    """その人が、注意事項の今の文面を承認しているか。"""
+    return NOTICE_VERSION in settings.get("approved_notices", [])
 
 
 def max_minutes(room: str) -> int:
@@ -72,20 +85,26 @@ def rooms_setting(settings: dict) -> dict[str, list[str]]:
     """その人が設定した、練習の種類ごとの部屋（この順に試す）。設定がなければ初期値。
 
     部屋を選べるようになる前の設定（3階の「よく使う部屋」）は、それを先頭にした3階の部屋として引き継ぐ。
+    注意事項のある部屋は、その人が文面を承認していなければ外す（空になることもある）。
     """
+    allowed = set(usable_rooms(notice_approved(settings)))
     chosen = settings.get("rooms") or {}
     favorites = [r for r in settings.get("favorite_rooms", []) if r in DEFAULT_ROOMS[PRACTICE_SOLO]]
     legacy_solo = favorites + [r for r in DEFAULT_ROOMS[PRACTICE_SOLO] if r not in favorites]
     result = {}
     for practice, default in ((PRACTICE_SOLO, legacy_solo), (PRACTICE_ENSEMBLE, DEFAULT_ROOMS[PRACTICE_ENSEMBLE])):
-        rooms = [r for r in chosen.get(practice, []) if r in VERIFIED_ROOMS]
-        result[practice] = rooms or default
+        rooms = chosen.get(practice) or default
+        result[practice] = [r for r in rooms if r in allowed]
     return result
 
 
-def rooms_for_plan(chosen: list[str], minutes: int) -> tuple[list[str], list[str]]:
-    """この予定で試す部屋（最大5室）と、利用時間が長すぎて外した部屋を返す。"""
-    usable = [r for r in chosen if r in VERIFIED_ROOMS]
+def rooms_for_plan(chosen: list[str], minutes: int, approved: bool) -> tuple[list[str], list[str]]:
+    """この予定で試す部屋（最大5室）と、利用時間が長すぎて外した部屋を返す。
+
+    注意事項のある部屋は、その人が文面を承認していなければ外す（承認を取り消した後に動く予定のため）。
+    """
+    allowed = set(usable_rooms(approved))
+    usable = [r for r in chosen if r in allowed]
     too_long = [r for r in usable if minutes > max_minutes(r)]
     to_try = [r for r in usable if r not in too_long][:MAX_ROOMS_TO_TRY]
     return to_try, too_long

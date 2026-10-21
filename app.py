@@ -38,7 +38,19 @@ from plans_store import (
     scheduler_last_seen,
     set_auto,
 )
-from rooms import MAX_ROOMS_TO_TRY, max_minutes, needs_members, room_label, rooms_for_plan, rooms_setting, usable_rooms
+from notices import NOTICE_DISPLAY, NOTICE_VERSION
+from rooms import (
+    MAX_ROOMS_TO_TRY,
+    NOTICE_ROOMS,
+    ROOM_IDS,
+    max_minutes,
+    needs_members,
+    notice_approved,
+    room_label,
+    rooms_for_plan,
+    rooms_setting,
+    usable_rooms,
+)
 
 MAX_LOGIN_FAILURES = 5
 # 予約係はこの間隔より短く「動いている印」を書く。これより古ければ止まっているとみなす
@@ -151,32 +163,53 @@ with st.expander("予約サイトのログイン情報" + ("（保存済み）" 
         credentials.delete(user)
         st.rerun()
 
-# ---- 自動予約の設定 ----
+# ---- 注意事項の承認 ----
 settings = load_settings(user)
+approved = notice_approved(settings)
+with st.expander("注意事項の承認（" + ("承認済み" if approved else "未承認：承認すると使える部屋が増えます") + "）"):
+    notice_rooms = [r for r in ROOM_IDS if r in NOTICE_ROOMS]
+    st.caption(f"次の部屋は、予約するときに下の注意事項の確認が必須です：{rooms_text(notice_rooms)}")
+    st.text(NOTICE_DISPLAY)
+    st.caption(
+        "承認すると、予約係があなたの予約でこれらの部屋を予約するときに、確認の欄に自動でチェックを入れます。"
+        "予約サイトの文面がこれと違っていたら、同意せずに止まります。これらの部屋では、同時利用者の学籍番号が必須で、利用は2時間までです。"
+    )
+    if approved:
+        if st.button("承認を取り消す"):
+            save_settings(user, {**settings, "approved_notices": [v for v in settings["approved_notices"] if v != NOTICE_VERSION]})
+            st.rerun()
+    else:
+        agree = st.checkbox("上の注意事項を読み、私の予約でこの確認の欄に自動でチェックを入れることを承認します")
+        if st.button("承認する", disabled=not agree):
+            save_settings(user, {**settings, "approved_notices": settings["approved_notices"] + [NOTICE_VERSION]})
+            st.rerun()
+
+# ---- 自動予約の設定 ----
 my_rooms = rooms_setting(settings)
 with st.expander("自動予約の設定（使う部屋）"):
     st.caption(
         f"練習の種類ごとに、使う部屋を**試したい順に**選んでください。1回の予約で、上から最大{MAX_ROOMS_TO_TRY}室を試します。"
-        "選べるのは、予約画面の作りを確かめた部屋だけです。"
+        "選べるのは、予約画面の作りを確かめた部屋だけです。注意事項のある部屋（Medium・Large）は、上で承認すると選べます。"
     )
     chosen = {}
     for practice in PRACTICE_TYPES:
         chosen[practice] = st.multiselect(
             f"{practice}で使う部屋（選んだ順に試します）",
-            usable_rooms(),
+            usable_rooms(approved),
             default=my_rooms[practice],
             format_func=room_label,
             key=f"rooms_{practice}",
         )
     # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
     st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
-    if st.button("設定を保存", disabled=not all(chosen.values())):
+    if st.button("設定を保存"):
         save_settings(user, {**settings, "rooms": chosen})
         settings = load_settings(user)
         my_rooms = rooms_setting(settings)
         st.success("保存しました。これから登録する予定に使われます（登録済みの予定の部屋は変わりません）。")
-    if not all(chosen.values()):
-        st.caption("どちらの練習の種類も、1室以上選んでください。")
+    for practice, rooms in chosen.items():
+        if not rooms:
+            st.caption(f"{practice}の部屋が選ばれていません。{practice}の予定は登録できません。")
 
 # ---- 管理者：アカウントの管理 ----
 if admin:
@@ -235,7 +268,7 @@ start_time = st.selectbox(
 )
 duration = st.radio("利用時間", DURATION_CHOICES_MIN, format_func=duration_label, horizontal=True)
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
-plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration)
+plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration, approved)
 members_text = ""
 if needs_members(plan_rooms):
     members_text = st.text_area(
