@@ -9,6 +9,7 @@
 """
 
 import argparse
+import sys
 import time as clock
 import tomllib
 from datetime import date, datetime, time, timedelta
@@ -19,6 +20,7 @@ from playwright.sync_api import Page, sync_playwright
 import credentials
 from auto_login import LOGIN_PATH, login
 from booking_rules import (
+    DAILY_LIMIT_MIN,
     DURATION_CHOICES_MIN,
     PRACTICE_ENSEMBLE,
     PRACTICE_SOLO,
@@ -28,6 +30,7 @@ from booking_rules import (
     start_datetime,
 )
 from inspect_page import safe_url
+from plans_store import STATUS_BOOKED, booked_minutes_on, find_plan, load_plans, mark_booked
 from reserve_dryrun import BASE_URL, CONFIRM_PATH, PAGE_TIMEOUT_MS, NotReached, add_url, ask_members, fill_until_confirm
 from rooms import ALL_ROOMS, MAX_MINUTES, NEEDS_MEMBERS, candidates
 
@@ -65,22 +68,45 @@ def register(page: Page) -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="予約可能日時になったら予約を送信する")
-    parser.add_argument("--date", type=date.fromisoformat, required=True, help="利用日（例：2026-10-26）")
-    parser.add_argument("--start", type=time.fromisoformat, required=True, help="開始時刻（例：16:30）")
-    parser.add_argument("--minutes", type=int, choices=DURATION_CHOICES_MIN, required=True, help="利用時間（分）")
+    parser.add_argument("--plan-id", help="予定登録の画面で登録した予定の番号（画面から起動するときに使う）")
+    parser.add_argument("--date", type=date.fromisoformat, help="利用日（例：2026-10-26）")
+    parser.add_argument("--start", type=time.fromisoformat, help="開始時刻（例：16:30）")
+    parser.add_argument("--minutes", type=int, choices=DURATION_CHOICES_MIN, help="利用時間（分）")
     parser.add_argument("--practice", choices=[PRACTICE_SOLO, PRACTICE_ENSEMBLE], default=PRACTICE_SOLO)
     parser.add_argument("--yes", action="store_true", help="登録を押す前の確認をしない（全自動）")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.plan_id and not (args.date and args.start and args.minutes):
+        parser.error("--plan-id か、--date・--start・--minutes の3つを指定してください")
+    return args
+
+
+def apply_plan(args: argparse.Namespace) -> list[str]:
+    """登録した予定の内容を args に入れ、1日の合計を確かめる。同時利用者を返す。"""
+    plans = load_plans()
+    plan = find_plan(plans, args.plan_id)
+    if plan["status"] == STATUS_BOOKED:
+        raise SystemExit("この予定はすでに予約完了になっています。")
+    args.date = date.fromisoformat(plan["use_date"])
+    args.start = time.fromisoformat(plan["start"])
+    args.minutes = plan["duration_min"]
+    args.practice = plan["practice_type"]
+    total = plan.get("existing_min", 0) + booked_minutes_on(plans, args.date, exclude_id=plan["id"]) + args.minutes
+    if total > DAILY_LIMIT_MIN:
+        raise SystemExit(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約しません。")
+    return plan.get("members", [])
 
 
 def main() -> None:
     args = parse_args()
+    plan_members = apply_plan(args) if args.plan_id else None
     rooms = candidates(args.practice, favorite_rooms(), MAX_ROOMS_TO_TRY)
     for room in rooms:
         limit = MAX_MINUTES.get(ALL_ROOMS[room])
         if limit and args.minutes > limit:
             raise SystemExit(f"{room}の利用時間は{limit}分までです。")
-    members = ask_members() if any(ALL_ROOMS[r] in NEEDS_MEMBERS for r in rooms) else None
+    members = None
+    if any(ALL_ROOMS[r] in NEEDS_MEMBERS for r in rooms):
+        members = plan_members or ask_members()
 
     start_at = start_datetime(args.date, args.start)
     opens_at = booking_opens_at(end_datetime(start_at, args.minutes))
@@ -121,6 +147,9 @@ def main() -> None:
 
         if booked_room and completed:
             print(f"予約が完了しました：{booked_room}　{start_at:%Y-%m-%d %H:%M} から {args.minutes}分")
+            if args.plan_id:
+                mark_booked(args.plan_id, booked_room, by="自動")
+                print("予定登録の画面で「予約完了」に切り替えました。")
         elif booked_room:
             print(f"{booked_room} の「登録」を押しましたが、完了画面になりませんでした。")
             print(f"結果の画面：{page.title()}  {safe_url(page.url)}")
@@ -133,4 +162,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if "--plan-id" in sys.argv:
+            # 画面から別ウィンドウで起動したときは、結果を読めるように閉じる前に待つ
+            input("\nEnter を押すと、このウィンドウを閉じます。")
