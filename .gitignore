@@ -3,3 +3,4 @@ data/
 __pycache__/
 local_settings.toml
 inspect_result.txt
+rooms_result.txt

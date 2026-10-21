@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 
 TOKYO = ZoneInfo("Asia/Tokyo")
 
-# 今回の画面で確認された利用時間の選択肢（全体の上限とは別物）
-DURATION_CHOICES_MIN = (30, 60, 90)
+# 利用時間の選択肢（予約サイトの選択肢のうち3時間まで）
+DURATION_CHOICES_MIN = (30, 60, 90, 120, 150, 180)
 
 # 同じ利用日の既存予約＋希望予約の合計がこれを超えたら警告する
 DAILY_LIMIT_MIN = 180
@@ -15,7 +15,13 @@ DAILY_LIMIT_MIN = 180
 # 予約受付は利用終了日時のこの日数前から
 OPEN_DAYS_BEFORE_END = 7
 
-ROOM_SMALL = "小練習室"
+PRACTICE_SOLO = "個人練習"
+PRACTICE_ENSEMBLE = "アンサンブル"
+ROOM_3F = "3階の部屋（どこでも）"
+ROOM_TB = "TBの部屋"
+
+# 練習の種類ごとに使う部屋
+ROOM_FOR_PRACTICE = {PRACTICE_SOLO: ROOM_3F, PRACTICE_ENSEMBLE: ROOM_TB}
 
 
 @dataclass(frozen=True)
@@ -49,9 +55,10 @@ def daily_total(existing_min: int, duration_min: int) -> int:
 
 
 def room_advice(practice_type: str, room: str) -> str | None:
-    """個人練習では小練習室を優先する。"""
-    if practice_type == "個人練習" and room != ROOM_SMALL:
-        return f"個人練習では{ROOM_SMALL}を優先してください。"
+    """個人練習は3階の部屋、アンサンブルはTBの部屋を使う。"""
+    expected = ROOM_FOR_PRACTICE.get(practice_type)
+    if expected and room != expected:
+        return f"{practice_type}では「{expected}」を使います。"
     return None
 
 

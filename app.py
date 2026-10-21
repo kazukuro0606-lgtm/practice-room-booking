@@ -10,12 +10,20 @@ from pathlib import Path
 
 import streamlit as st
 
-from booking_rules import DAILY_LIMIT_MIN, DURATION_CHOICES_MIN, ROOM_SMALL, check_plan
+from booking_rules import (
+    DAILY_LIMIT_MIN,
+    DURATION_CHOICES_MIN,
+    PRACTICE_ENSEMBLE,
+    PRACTICE_SOLO,
+    ROOM_3F,
+    ROOM_TB,
+    check_plan,
+)
 
 DATA_FILE = Path(__file__).parent / "data" / "plans.json"
 
-ROOMS = [ROOM_SMALL, "中練習室", "大練習室"]  # 仮の候補。実際の部屋名に合わせて直す
-PRACTICE_TYPES = ["個人練習", "合わせ練習"]
+ROOMS = [ROOM_3F, ROOM_TB]
+PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
 STATUS_PLANNED = "予定（未予約）"
 STATUS_BOOKED = "予約完了（大学サイトで手動予約済み）"
 
@@ -29,6 +37,11 @@ def load_plans() -> list[dict]:
 def save_plans(plans: list[dict]) -> None:
     DATA_FILE.parent.mkdir(exist_ok=True)
     DATA_FILE.write_text(json.dumps(plans, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def duration_label(minutes: int) -> str:
+    hours, rest = divmod(minutes, 60)
+    return "".join([f"{hours}時間" if hours else "", f"{rest}分" if rest else ""])
 
 
 def fmt(dt) -> str:
@@ -46,9 +59,9 @@ st.header("1. 予定を入力")
 use_date = st.date_input("利用日", value=date.today())
 start_time = st.time_input("開始時刻", value=time(15, 0), step=1800)
 duration = st.radio(
-    "利用時間（今回の画面で確認された選択肢）",
+    "利用時間",
     DURATION_CHOICES_MIN,
-    format_func=lambda m: f"{m}分",
+    format_func=duration_label,
     horizontal=True,
 )
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)

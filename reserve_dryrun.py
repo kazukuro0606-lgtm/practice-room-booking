@@ -20,7 +20,7 @@ CONFIRM_PATH = "/senzoku/reserve/add_conf"
 PAGE_TIMEOUT_MS = 15_000
 
 # 予約画面の「ご利用時間」の選択肢の表示名
-USETIME_LABELS = {30: "30分", 60: "1時間", 90: "1時間 30分"}
+USETIME_LABELS = {30: "30分", 60: "1時間", 90: "1時間 30分", 120: "2時間", 150: "2時間 30分", 180: "3時間"}
 USE_TYPE_LABEL = "個人練習"
 
 
