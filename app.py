@@ -1,16 +1,18 @@
-"""練習室の予約予定を登録する画面（PC内 localhost だけで動く）。
+"""練習室の予約予定を登録する画面（PCの localhost で動き、Tailscale Serve 経由でスマホからも開く）。
 
-この画面自体は大学サイトに接続しない。
+開くにはパスワード（app_auth.py）が必要。この画面自体は大学サイトに接続しない。
 「自動予約を起動」を押したときだけ、別ウィンドウで auto_reserve.py を起動する。
 """
 
 import subprocess
 import sys
+import time as time_module
 from datetime import date, time
 from pathlib import Path
 
 import streamlit as st
 
+import app_auth
 from booking_rules import (
     DAILY_LIMIT_MIN,
     DURATION_CHOICES_MIN,
@@ -34,6 +36,7 @@ from plans_store import (
 from rooms import ROOMS_3F
 
 APP_DIR = Path(__file__).parent
+MAX_LOGIN_FAILURES = 5
 ROOMS = [ROOM_3F, ROOM_TB]
 PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
 
@@ -60,6 +63,33 @@ def launch_auto_reserve(plan_id: str, skip_confirm: bool) -> None:
 
 
 st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
+
+
+def require_login() -> None:
+    """画面のパスワードを確認するまで、ほかの表示を止める。"""
+    if st.session_state.get("logged_in"):
+        return
+    st.title("練習室予約の予定登録")
+    if not app_auth.is_configured():
+        st.error("画面のパスワードが未設定です。PCのPowerShellで `python app_auth.py set` を実行してください。")
+        st.stop()
+    failures = st.session_state.get("login_failures", 0)
+    if failures >= MAX_LOGIN_FAILURES:
+        st.error("パスワードを続けて間違えたため、ロックしました。ページを開き直してください。")
+        st.stop()
+    with st.form("login"):
+        password = st.text_input("パスワード", type="password")
+        if st.form_submit_button("開く"):
+            if app_auth.verify(password):
+                st.session_state["logged_in"] = True
+                st.rerun()
+            st.session_state["login_failures"] = failures + 1
+            time_module.sleep(1)  # 総当たりを遅くする
+            st.error("パスワードが違います。")
+    st.stop()
+
+
+require_login()
 st.title("練習室予約の予定登録")
 st.caption("自分のログインID・パスワードはここに入力しないでください（資格情報マネージャーに保存したものを使います）。")
 
