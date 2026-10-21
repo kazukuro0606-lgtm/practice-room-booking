@@ -19,6 +19,10 @@ ALL_ROOMS = {**ROOMS_3F, **ROOMS_TB}
 
 CANDIDATES = {PRACTICE_SOLO: ROOMS_3F, PRACTICE_ENSEMBLE: ROOMS_TB}
 
+# E452 は利用時間が2時間まで、注意事項の確認と同時利用者の入力が必須
+MAX_MINUTES = {291: 120}
+NEEDS_MEMBERS = {291}
+
 
 def event_id_of(room: str) -> int:
     key = room.upper().removesuffix("室")

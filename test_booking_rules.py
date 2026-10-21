@@ -32,6 +32,14 @@ class BookingRulesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             end_datetime(start, 210)
 
+    def test_tb_room_is_up_to_2_hours(self):
+        ok = check_plan(date(2026, 10, 28), time(15, 0), 120, 0, "アンサンブル", "TBの部屋")
+        self.assertFalse(ok.over_room_limit)
+        over = check_plan(date(2026, 10, 28), time(15, 0), 150, 0, "アンサンブル", "TBの部屋")
+        self.assertTrue(over.over_room_limit)
+        solo = check_plan(date(2026, 10, 28), time(15, 0), 180, 0, "個人練習", "3階の部屋（どこでも）")
+        self.assertFalse(solo.over_room_limit)
+
     def test_rejects_unknown_duration_and_negative_existing(self):
         start = start_datetime(date(2026, 10, 28), time(15, 0))
         with self.assertRaises(ValueError):

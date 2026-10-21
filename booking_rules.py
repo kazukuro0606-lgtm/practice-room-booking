@@ -23,6 +23,9 @@ ROOM_TB = "TBの部屋"
 # 練習の種類ごとに使う部屋
 ROOM_FOR_PRACTICE = {PRACTICE_SOLO: ROOM_3F, PRACTICE_ENSEMBLE: ROOM_TB}
 
+# 予約サイトで選べる利用時間の上限が3時間より短い部屋
+ROOM_MAX_MIN = {ROOM_TB: 120}
+
 
 @dataclass(frozen=True)
 class Check:
@@ -31,6 +34,7 @@ class Check:
     daily_total_min: int
     over_daily_limit: bool
     room_advice: str | None
+    over_room_limit: bool
 
 
 def start_datetime(use_date: date, start_time: time) -> datetime:
@@ -79,4 +83,5 @@ def check_plan(
         daily_total_min=total,
         over_daily_limit=total > DAILY_LIMIT_MIN,
         room_advice=room_advice(practice_type, room),
+        over_room_limit=duration_min > ROOM_MAX_MIN.get(room, max(DURATION_CHOICES_MIN)),
     )

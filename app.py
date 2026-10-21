@@ -16,6 +16,7 @@ from booking_rules import (
     PRACTICE_ENSEMBLE,
     PRACTICE_SOLO,
     ROOM_3F,
+    ROOM_MAX_MIN,
     ROOM_TB,
     check_plan,
 )
@@ -52,7 +53,7 @@ st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
 st.title("練習室予約の予定登録")
 st.caption(
     "この画面は予定を記録するだけです。大学サイトへの接続や予約送信は行いません。"
-    "学籍番号・パスワードは入力しないでください。"
+    "自分のログインID・パスワードはここに入力しないでください。"
 )
 
 st.header("1. 予定を入力")
@@ -66,6 +67,13 @@ duration = st.radio(
 )
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
 room = st.selectbox("希望する部屋", ROOMS)
+members_text = ""
+if room == ROOM_TB:
+    members_text = st.text_area(
+        "同時利用者の学籍番号（1行に1人・TBの部屋では必須）",
+        help="このPCの data/plans.json にだけ保存します。一緒に使う人には、予約に使うことを伝えておいてください。",
+    )
+members = [m.strip() for m in members_text.splitlines() if m.strip()]
 equipment = st.text_input("設備条件（任意）", placeholder="例：ピアノあり、譜面台2台")
 existing = st.number_input(
     "同じ利用日の既存予約時間（分・手入力）", min_value=0, max_value=1440, value=0, step=30
@@ -81,8 +89,13 @@ if check.over_daily_limit:
     st.warning(f"この日の合計が{DAILY_LIMIT_MIN}分を超えています。")
 if check.room_advice:
     st.warning(check.room_advice)
+if check.over_room_limit:
+    st.error(f"{room}は{duration_label(ROOM_MAX_MIN[room])}までしか予約できません。")
+if room == ROOM_TB and not members:
+    st.error("TBの部屋では、同時利用者の学籍番号が必要です。")
 
-if st.button("予定として登録する"):
+can_register = not check.over_room_limit and not (room == ROOM_TB and not members)
+if st.button("予定として登録する", disabled=not can_register):
     plans = load_plans()
     plans.append(
         {
@@ -93,6 +106,7 @@ if st.button("予定として登録する"):
             "practice_type": practice_type,
             "room": room,
             "equipment": equipment,
+            "members": members,
             "existing_min": int(existing),
             "opens_at": fmt(check.opens_at),
             "status": STATUS_PLANNED,
@@ -112,7 +126,8 @@ for i, p in enumerate(plans):
         st.write(
             f"{label}　{p['use_date']} {p['start']}〜{p['end']}　{p['room']}（{p['practice_type']}）"
         )
-        st.caption(f"予約可能：{p['opens_at']}　設備：{p['equipment'] or 'なし'}")
+        members_note = f"　同時利用者：{len(p['members'])}人" if p.get("members") else ""
+        st.caption(f"予約可能：{p['opens_at']}　設備：{p['equipment'] or 'なし'}{members_note}")
         col1, col2 = st.columns(2)
         if not booked and col1.button("大学サイトで予約した → 完了にする", key=f"done{i}"):
             p["status"] = STATUS_BOOKED

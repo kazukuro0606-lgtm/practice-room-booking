@@ -14,7 +14,8 @@ from playwright.sync_api import Page, sync_playwright
 import credentials
 from auto_login import ALLOWED_HOST, LOGIN_PATH, login
 from booking_rules import DURATION_CHOICES_MIN, TOKYO, booking_opens_at, end_datetime, start_datetime
-from rooms import event_id_of
+from notices import notice_unchanged
+from rooms import MAX_MINUTES, NEEDS_MEMBERS, event_id_of
 
 BASE_URL = f"https://{ALLOWED_HOST}/senzoku"
 CONFIRM_PATH = "/senzoku/reserve/add_conf"
@@ -30,13 +31,24 @@ def add_url(event_id: int, use_date: date, start: time, base_url: str = BASE_URL
     return f"{base_url}/reserve/add?{query}"
 
 
-def fill_until_confirm(page: Page, url: str, minutes: int, use_type: str = DEFAULT_USE_TYPE) -> None:
-    """予約登録画面に入力して「確認」まで進む。確認画面の登録ボタンは押さない。"""
+def fill_until_confirm(
+    page: Page, url: str, minutes: int, use_type: str = DEFAULT_USE_TYPE, members: list[str] | None = None
+) -> None:
+    """予約登録画面に入力して「確認」まで進む。確認画面の登録ボタンは押さない。
+
+    members を渡したとき（E452）は、注意事項が承認済みの文面のままか確かめてから同意し、
+    同時利用者の学籍番号を入力する。
+    """
     page.goto(url)
     if urlsplit(page.url).hostname != urlsplit(url).hostname:
         raise SystemExit("予約サイト以外のページに移動したため、中止しました。")
+    if members is not None and not notice_unchanged(page.inner_text("body")):
+        raise SystemExit("注意事項の文面が、承認したものから変わっています。同意せずに中止しました。Edgeで文面を確認してください。")
     try:
         page.get_by_label(use_type, exact=True).check()
+        if members is not None:
+            page.check("#value_24")
+            page.fill("#value_25", "\n".join(members))
         page.select_option("select[name='datetime[usetime]']", label=USETIME_LABELS[minutes])
         page.click("#conf")
         page.wait_for_url(lambda u: CONFIRM_PATH in u, timeout=PAGE_TIMEOUT_MS)
@@ -64,8 +76,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def ask_members() -> list[str]:
+    """同時利用者の学籍番号を入力してもらう（保存しない）。"""
+    print("同時利用者の学籍番号を1人ずつ入力し、最後に何も入力せずに Enter を押してください。")
+    members = []
+    while line := input(f"{len(members) + 1}人目：").strip():
+        members.append(line)
+    if not members:
+        raise SystemExit("この部屋は同時利用者の入力が必須です。中止しました。")
+    return members
+
+
 def main() -> None:
     args = parse_args()
+    max_minutes = MAX_MINUTES.get(args.room)
+    if max_minutes and args.minutes > max_minutes:
+        raise SystemExit(f"この部屋の利用時間は{max_minutes}分までです。")
+    members = ask_members() if args.room in NEEDS_MEMBERS else None
     start_at = start_datetime(args.date, args.start)
     opens_at = booking_opens_at(end_datetime(start_at, args.minutes))
     if datetime.now(TOKYO) < opens_at:
@@ -78,7 +105,7 @@ def main() -> None:
         page.goto(BASE_URL + "/login/")
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
-        fill_until_confirm(page, add_url(args.room, args.date, args.start), args.minutes, args.use_type)
+        fill_until_confirm(page, add_url(args.room, args.date, args.start), args.minutes, args.use_type, members)
         print("確認画面まで進みました。予約はまだ完了していません（登録ボタンは押していません）。")
         print("Edgeで内容を確認したら、Edgeのウィンドウを閉じてください（閉じると終了します）。")
         page.wait_for_event("close", timeout=0)
