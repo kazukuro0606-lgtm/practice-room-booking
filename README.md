@@ -50,3 +50,17 @@ streamlit run app.py
 ```powershell
 python -m unittest -v
 ```
+
+## 段階2-1：予約ページをEdgeで開く（ログイン・予約送信はしない）
+
+`local_settings.example.toml` をコピーして `local_settings.toml` を作り、`url` に予約ページのアドレスを書きます。
+学籍番号・パスワードは書きません。`local_settings.toml` はGitに追加されません。
+
+```powershell
+python -m pip install -r requirements.txt
+Copy-Item local_settings.example.toml local_settings.toml
+notepad local_settings.toml
+python open_site.py
+```
+
+Edgeが開き、予約ページが表示されます。Edgeのウィンドウを閉じると終了します。

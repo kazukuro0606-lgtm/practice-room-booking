@@ -1,3 +1,5 @@
 streamlit>=1.40
 # Required on Windows for the Asia/Tokyo time zone
 tzdata
+# Browser automation (uses the Edge already installed on Windows)
+playwright>=1.48

@@ -1,0 +1,6 @@
+# Copy this file to local_settings.toml and fill in.
+# local_settings.toml is not committed to Git.
+# Do NOT write your student ID or password here.
+
+# URL of the Reservation Engine page you normally open
+url = "https://example.com/"
