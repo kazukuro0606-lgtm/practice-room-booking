@@ -14,7 +14,7 @@ from playwright.sync_api import Page, sync_playwright
 import credentials
 from auto_login import ALLOWED_HOST, LOGIN_PATH, login
 from booking_rules import DURATION_CHOICES_MIN, TOKYO, booking_opens_at, end_datetime, start_datetime
-from notices import notice_unchanged
+from notices import NOTICE_CHANGED, NOTICE_MISSING, notice_status
 from rooms import MAX_MINUTES, NEEDS_MEMBERS, event_id_of
 
 BASE_URL = f"https://{ALLOWED_HOST}/senzoku"
@@ -51,8 +51,14 @@ def fill_until_confirm(
     page.goto(url)
     if urlsplit(page.url).hostname != urlsplit(url).hostname:
         raise SystemExit("予約サイト以外のページに移動したため、中止しました。")
-    if members is not None and not notice_unchanged(page.inner_text("body")):
-        raise SystemExit("注意事項の文面が、承認したものから変わっています。同意せずに中止しました。Edgeで文面を確認してください。")
+    if members is not None:
+        status, found = notice_status(page.inner_text("body"))
+        if status == NOTICE_MISSING:
+            # 予約登録の画面が出ていない（埋まっている・利用できない時間など）
+            raise NotReached()
+        if status == NOTICE_CHANGED:
+            print("画面の注意事項：\n" + found.strip())
+            raise SystemExit("注意事項の文面が、承認したものから変わっています。同意せずに中止しました。Edgeで文面を確認してください。")
     try:
         page.get_by_label(use_type, exact=True).check()
         if members is not None:

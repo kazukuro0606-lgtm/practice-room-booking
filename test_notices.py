@@ -1,6 +1,6 @@
 import unittest
 
-from notices import notice_unchanged
+from notices import NOTICE_CHANGED, NOTICE_MISSING, NOTICE_OK, notice_status, notice_unchanged
 
 # 2026-10-21 に本人が画面からコピーした文字列
 PAGE_TEXT = """予約登録
@@ -32,6 +32,13 @@ class NoticesTest(unittest.TestCase):
 
     def test_missing_section_is_rejected(self):
         self.assertFalse(notice_unchanged("予約登録\n同時利用者（学籍番号）"))
+
+    def test_status_tells_missing_from_changed(self):
+        self.assertEqual(notice_status(PAGE_TEXT)[0], NOTICE_OK)
+        self.assertEqual(notice_status("この時間は予約できません")[0], NOTICE_MISSING)
+        status, found = notice_status(PAGE_TEXT.replace("極力控え", "禁止とし"))
+        self.assertEqual(status, NOTICE_CHANGED)
+        self.assertIn("禁止とし", found)
 
 
 if __name__ == "__main__":

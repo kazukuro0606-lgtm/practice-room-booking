@@ -35,6 +35,20 @@ def extract_between(page_text: str, start: str, end: str) -> str | None:
     return page_text[i + len(start) : j]
 
 
-def notice_unchanged(page_text: str) -> bool:
+NOTICE_OK = "ok"
+NOTICE_MISSING = "missing"  # 注意事項の欄が画面にない（予約登録の画面が出ていない等）
+NOTICE_CHANGED = "changed"  # 注意事項の欄はあるが、文面が承認したものと違う
+
+
+def notice_status(page_text: str) -> tuple[str, str]:
+    """(状態, 画面で見つかった注意事項の文面) を返す。"""
     found = extract_between(page_text, E452_NOTICE_START, E452_NOTICE_END)
-    return found is not None and normalize(found) == normalize(APPROVED_E452_NOTICE)
+    if found is None:
+        return NOTICE_MISSING, ""
+    if normalize(found) == normalize(APPROVED_E452_NOTICE):
+        return NOTICE_OK, found
+    return NOTICE_CHANGED, found
+
+
+def notice_unchanged(page_text: str) -> bool:
+    return notice_status(page_text)[0] == NOTICE_OK
