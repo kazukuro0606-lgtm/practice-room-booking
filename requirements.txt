@@ -1,2 +1,3 @@
 streamlit>=1.40
-tzdata  # Windows で Asia/Tokyo を使うために必要
+# Required on Windows for the Asia/Tokyo time zone
+tzdata
