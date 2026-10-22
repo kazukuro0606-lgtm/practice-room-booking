@@ -17,6 +17,7 @@ from datetime import date, datetime, time, timedelta
 from playwright.sync_api import Page, sync_playwright
 
 import credentials
+from notify import notify_plan_result
 from auto_login import LOGIN_PATH, login
 from booking_rules import (
     CLOSE_TIME,
@@ -199,6 +200,10 @@ def main() -> None:
         # 例外の文面に入力値が含まれる可能性があるので、記録するのは種類だけ
         record_run(args.plan_id, datetime.now(TOKYO), f"エラーで中止（{type(e).__name__}）", [])
         raise
+    finally:
+        if args.unattended and not getattr(args, "cancelled", False):
+            # 予約係に任せた予定の結果を、本人にメールで知らせる（登録している人だけ）
+            notify_plan_result(args.plan_id)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -247,6 +252,7 @@ def run(args: argparse.Namespace) -> None:
             login(page, login_id, password)
         wait_until(send_at, "予約開始")
         if args.unattended and args.plan_id and auto_state(args.plan_id) != AUTO_RUNNING:
+            args.cancelled = True  # 本人が取り消したので、メールでは知らせない
             raise SystemExit("待っている間に「予約係に任せる」が取り消されたため、予約しませんでした。")
 
         started_at = datetime.now(TOKYO)

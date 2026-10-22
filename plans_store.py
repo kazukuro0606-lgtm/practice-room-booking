@@ -21,7 +21,9 @@ DEFAULT_SETTINGS = {
     "favorite_rooms": [],  # 個人練習で先に試す3階の部屋（この順）
     "skip_confirm": False,  # True なら「登録」を押す前の確認をしない（全自動）
     "approved_notices": [],  # 本人が承認した注意事項の印（notices.NOTICE_VERSION）
-    "onboarded_version": 0,  # 同意した「はじめに」の版（onboarding.ONBOARDING_VERSION）。0 はまだ
+    "onboarded_version": 0,
+    "email": "",  # 確認済みのお知らせメールの宛先（空なら送らない）
+    "email_pending": None,  # 確認番号を送った宛先（email_verify.pending_for）  # 同意した「はじめに」の版（onboarding.ONBOARDING_VERSION）。0 はまだ
 }
 
 STATUS_PLANNED = "予定（未予約）"

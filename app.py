@@ -5,6 +5,7 @@
 予約可能日時に、予定を登録した本人のログイン情報で予約する。
 """
 
+import smtplib
 import time as time_module
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
@@ -16,6 +17,8 @@ import account_check
 import account_checks
 import app_auth
 import credentials
+import email_verify
+import mailer
 from account_checks import (
     STATUS_ERROR,
     STATUS_LOGIN_FAILED,
@@ -84,6 +87,9 @@ PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
 # （何度も間違えると、予約サイト側でアカウントが止められるおそれがあるため）
 SITE_LOGIN_WINDOW = timedelta(minutes=15)
 SITE_LOGIN_MAX_FAILURES = 3
+# お知らせメールの確認番号は、この時間内にこの回数まで送れる（いたずらで大量に送られないように）
+EMAIL_CODE_WINDOW = timedelta(minutes=15)
+EMAIL_CODE_MAX_SENDS = 3
 
 
 def duration_label(minutes: int) -> str:
@@ -142,6 +148,59 @@ def verify_site_login(user: str, login_id: str, password: str, now: datetime) ->
         return ("予約サイトにログインできませんでした。ログインIDとパスワードを確かめてください。保存していません。"
                 + (f"（あと{left}回まで試せます）" if left > 0 else ""))
     return "予約サイトを開けなかったため、確かめられませんでした。保存していません。少し待ってから、もう一度保存してください。"
+
+
+@st.cache_resource
+def email_code_sends() -> dict[str, list[datetime]]:
+    """人ごとの、確認番号のメールを送った時刻。"""
+    return {}
+
+
+def send_email_code(user: str, address: str, now: datetime) -> str | None:
+    """お知らせメールの宛先に確認番号を送る。送れたら None、だめなら理由を返す。"""
+    if problem := mailer.address_problem(address):
+        return problem + "。"
+    sends = [t for t in email_code_sends().get(user, []) if now - t < EMAIL_CODE_WINDOW]
+    if len(sends) >= EMAIL_CODE_MAX_SENDS:
+        return "確認番号を続けて送ったため、しばらく送れません。15分ほど待ってから、もう一度試してください。"
+    code = email_verify.new_code()
+    body = "\n".join([
+        "練習室予約のアプリで、このアドレスがお知らせメールの宛先として登録されようとしています。",
+        "",
+        f"確認番号：{code}",
+        "",
+        "アプリの「お知らせメール」にこの番号を入れると、登録が完了します（30分以内）。",
+        "心当たりがなければ、このメールは無視してください。",
+    ])
+    with st.spinner("確認番号のメールを送っています…"):
+        try:
+            mailer.send(address, "【練習室】お知らせメールの確認番号", body)
+        except Exception as e:
+            # 例外の文面にアドレスなどが含まれうるので、種類だけを出す
+            return f"確認番号のメールを送れませんでした（{type(e).__name__}）。アドレスを確かめてください。"
+    email_code_sends()[user] = sends + [now]
+    save_settings(user, {**load_settings(user), "email_pending": email_verify.pending_for(address, code, now)})
+    return None
+
+
+def save_mail_sender(address: str, app_password: str) -> str | None:
+    """送り元の Gmail で試しのメールを自分宛てに送り、届けば保存する。保存できたら None、だめなら理由を返す。"""
+    if problem := mailer.address_problem(address):
+        return problem + "。"
+    app_password = mailer.normalize_app_password(app_password)
+    if len(app_password) != 16:
+        return "アプリパスワードは16文字です（Google が表示した4文字ずつの区切りの空白はあってもかまいません）。"
+    body = "練習室予約のアプリから、お知らせメールの送り元として送れることを確かめるための、試しのメールです。"
+    with st.spinner("試しのメールを送っています…"):
+        try:
+            mailer.send(address, "【練習室】お知らせメールの試し", body, sender_address=address, app_password=app_password)
+        except smtplib.SMTPAuthenticationError:
+            return ("Gmail にログインできませんでした。アドレスとアプリパスワード、"
+                    "その Google アカウントの2段階認証がオンになっているかを確かめてください。")
+        except Exception as e:
+            return f"試しのメールを送れませんでした（{type(e).__name__}）。"
+    mailer.store(address, app_password)
+    return None
 
 
 def update_own_plans(user: str, change) -> None:
@@ -463,8 +522,74 @@ with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.ses
         if not rooms:
             st.caption(f"{practice}の部屋が選ばれていません。{practice}の予定は登録できません。")
 
+# ---- お知らせメール ----
+mail_settings = load_settings(user)
+my_email = mail_settings.get("email")
+email_pending = mail_settings.get("email_pending")
+email_flash = st.session_state.pop("email_flash", None)
+with st.expander("お知らせメール" + (f"（登録済み：{my_email}）" if my_email else "（未登録・任意）"),
+                 expanded=bool(email_flash or email_pending)):
+    st.caption("予約係に任せた予定の結果（予約完了・予約できなかった）を、メールで知らせます。メールに書くのは日時・部屋・結果だけです。")
+    if email_flash:
+        st.success(email_flash)
+    if not mailer.configured():
+        st.info("管理者がまだメールの送り元を設定していないため、いまは登録できません。")
+    else:
+        with st.form("email_address", clear_on_submit=True):
+            address = st.text_input("メールアドレス" if not my_email else "別のメールアドレスに変える", autocomplete="email")
+            if st.form_submit_button("確認番号を送る"):
+                if problem := send_email_code(user, address.strip(), datetime.now(TOKYO)):
+                    st.error(problem)
+                else:
+                    st.session_state["email_flash"] = "確認番号を送りました。届いたメールの6桁の番号を、下に入れてください。"
+                    st.rerun()
+        if email_pending:
+            st.write(f"**{email_pending['address']}** に送った確認番号を入れてください（30分以内）。"
+                     "届かないときは、迷惑メールのフォルダも見てください。")
+            with st.form("email_code", clear_on_submit=True):
+                code = st.text_input("確認番号（6桁）", max_chars=6, autocomplete="one-time-code")
+                if st.form_submit_button("登録する"):
+                    current = load_settings(user)
+                    pending = current.get("email_pending")
+                    ok, why = email_verify.check(pending, code, datetime.now(TOKYO))
+                    if ok:
+                        save_settings(user, {**current, "email": pending["address"], "email_pending": None})
+                        st.session_state["email_flash"] = f"{pending['address']} を登録しました。予約の結果をこのアドレスに知らせます。"
+                        st.rerun()
+                    if pending:
+                        save_settings(user, {**current, "email_pending": {**pending, "tries": pending.get("tries", 0) + 1}})
+                    st.error(why)
+    if my_email and st.button("お知らせメールの登録を取り消す"):
+        save_settings(user, {**load_settings(user), "email": "", "email_pending": None})
+        st.session_state["email_flash"] = "登録を取り消しました。メールは届かなくなります。"
+        st.rerun()
+
 # ---- 管理者：アカウントの管理 ----
 if admin:
+    sender_now = mailer.sender()
+    sender_flash = st.session_state.pop("sender_flash", None)
+    with st.expander("お知らせメールの送り元（管理者だけに表示）" + (f"（設定済み：{sender_now}）" if sender_now else "（未設定）"),
+                     expanded=bool(sender_flash)):
+        if sender_flash:
+            st.success(sender_flash)
+        st.caption(
+            "お知らせメールを送る Gmail のアドレスと、その Google アカウントで作った「アプリパスワード」（16文字）を入れます。"
+            "保存する前に、そのアドレス宛てに試しのメールを1通送って確かめます。"
+            "入力した内容は、このPCの資格情報マネージャーに保存され、画面には表示されません。"
+        )
+        with st.form("mail_sender", clear_on_submit=True):
+            gmail = st.text_input("送り元の Gmail アドレス", autocomplete="off")
+            app_password = st.text_input("アプリパスワード（16文字）", type="password", autocomplete="off")
+            if st.form_submit_button("試しのメールを送って保存する"):
+                if problem := save_mail_sender(gmail.strip(), app_password):
+                    st.error(problem)
+                else:
+                    st.session_state["sender_flash"] = f"{gmail.strip()} から送れることを確かめて、保存しました。受信箱に試しのメールが届いているはずです。"
+                    st.rerun()
+        if sender_now and st.button("送り元の設定を削除する（お知らせメールを止める）"):
+            mailer.delete()
+            st.session_state["sender_flash"] = "送り元の設定を削除しました。お知らせメールは送られなくなります。"
+            st.rerun()
     with st.expander("予約サイトのアカウントの確認結果（管理者だけに表示）"):
         for name in app_auth.list_users():
             c = load_check(name)
