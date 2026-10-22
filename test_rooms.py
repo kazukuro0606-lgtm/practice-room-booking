@@ -83,7 +83,8 @@ class RoomsTest(unittest.TestCase):
         self.assertEqual(piano_of("E320"), "アップライト")
         self.assertEqual(piano_of("E341"), "グランド")
         self.assertEqual(piano_of("E324"), "ピアノなし")
-        self.assertEqual(piano_of("E452"), PIANO_UNKNOWN_LABEL)  # まだ調べていない
+        self.assertEqual(piano_of("E452"), "ピアノなし")
+        self.assertEqual({r for r in ROOM_IDS if piano_of(r) == PIANO_UNKNOWN_LABEL}, set())  # 全部の部屋を調べた
 
 
 if __name__ == "__main__":

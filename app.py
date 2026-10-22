@@ -511,7 +511,8 @@ with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.ses
         key = f"rooms_{practice}"
         # 選んである部屋は、絞り込みで外れても一覧に残す（外すときは × で外す）
         selected = st.session_state.get(key, my_rooms[practice])
-        options = [r for r in usable_rooms(**perms) if piano_of(r) in pianos or r in selected]
+        options = [r for r in usable_rooms(**perms)
+                   if piano_of(r) in pianos or piano_of(r) not in PIANO_KINDS or r in selected]
         chosen[practice] = st.multiselect(
             f"{practice}で使う部屋（選んだ順に試します）",
             options,

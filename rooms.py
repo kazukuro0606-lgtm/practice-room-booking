@@ -52,13 +52,16 @@ PIANO_ROOMS = {"E241", "E242", "E243", "E244", "E245", "E246", "E252", "E311"}
 COURSE_ROOMS = WIND_ONLY_ROOMS | PIANO_ROOMS
 VERIFIED_ROOMS = PLAIN_ROOMS | NOTICE_ROOMS
 
-# 部屋のピアノ（予約状況の画面の「タグから絞り込み」のピアノで調べた結果。piano_rooms.py、2026-10-22）
+# 部屋のピアノ（予約状況の画面の「タグから絞り込み」のピアノで調べた結果。piano_rooms.py、2026-10-22。
+# 管理者とピアノコースの友達のアカウントで、アプリにある全部の部屋を調べた）
 PIANO_GRAND_LABEL = "グランド"
 PIANO_UPRIGHT_LABEL = "アップライト"
 PIANO_NONE_LABEL = "ピアノなし"
-PIANO_UNKNOWN_LABEL = "ピアノ不明"
-PIANO_KINDS = (PIANO_GRAND_LABEL, PIANO_UPRIGHT_LABEL, PIANO_NONE_LABEL, PIANO_UNKNOWN_LABEL)
-_PIANO_NONE = {"E224", "E229", "E230", "E234", "E238", "E324", "E329", "E330", "E334", "E338"}
+PIANO_UNKNOWN_LABEL = "ピアノ不明"  # これから登録する部屋で、まだ調べていないもの
+PIANO_KINDS = (PIANO_GRAND_LABEL, PIANO_UPRIGHT_LABEL, PIANO_NONE_LABEL)
+_PIANO_NONE = {"E224", "E229", "E230", "E234", "E238", "E324", "E329", "E330", "E334", "E338",
+               "E412", "E420", "E421", "E422", "E423", "E424", "E425", "E426", "E427", "E428", "E429", "E430",
+               "E432", "E441", "E442", "E451", "E452"}
 PIANO_ROOMS_BY_KIND = {
     PIANO_GRAND_LABEL: {"E215", "E241", "E242", "E243", "E244", "E245", "E246", "E251", "E252", "E311", "E313",
                         "E341", "E342", "E343", "E344", "E345", "E346",
