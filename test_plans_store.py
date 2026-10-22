@@ -1,4 +1,7 @@
+import multiprocessing
+import os
 import tempfile
+import time
 import unittest
 from datetime import date, datetime
 from pathlib import Path
@@ -84,6 +87,39 @@ class PlansStoreTest(unittest.TestCase):
 
         delete_user_data("friend1")
         self.assertEqual([p["id"] for p in load_plans()], ["old"])
+
+    def test_results_finished_at_the_same_time_are_all_kept(self):
+        # 予約可能日時が重なり、別々のプロセスの自動予約が同時に結果を書いても、どれも消えない
+        ids = [f"p{i}" for i in range(8)]
+        save_plans([plan(pid, "2026-10-26", 30, STATUS_PLANNED) for pid in ids])
+        ctx = multiprocessing.get_context("spawn")
+        procs = [ctx.Process(target=_finish_in_child, args=(str(plans_store.DATA_FILE), pid)) for pid in ids]
+        for proc in procs:
+            proc.start()
+        for proc in procs:
+            proc.join(60)
+            self.assertEqual(proc.exitcode, 0)
+        saved = {p["id"]: p for p in load_plans()}
+        for pid in ids:
+            self.assertEqual(saved[pid]["status"], STATUS_BOOKED)
+            self.assertIn("last_run", saved[pid])
+        self.assertFalse(plans_store._lock_file().exists())
+
+    def test_stale_lock_is_removed(self):
+        save_plans([plan("x", "2026-10-26", 30, STATUS_PLANNED)])
+        lock = plans_store._lock_file()
+        lock.touch()
+        old = time.time() - plans_store.LOCK_STALE_SECONDS - 5
+        os.utime(lock, (old, old))
+        mark_booked("x", "E320", "auto")
+        self.assertEqual(load_plans()[0]["status"], STATUS_BOOKED)
+
+
+def _finish_in_child(data_file: str, plan_id: str) -> None:
+    plans_store.DATA_FILE = Path(data_file)
+    for _ in range(5):  # 何度も書いて、重なる機会を増やす
+        record_run(plan_id, datetime(2026, 10, 19, 13, 0, 2), "空きなし", [])
+    mark_booked(plan_id, "E320", "auto")
 
 
 if __name__ == "__main__":

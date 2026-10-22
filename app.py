@@ -51,10 +51,10 @@ from plans_store import (
     load_settings,
     new_id,
     plans_of,
-    save_plans,
     save_settings,
     scheduler_last_seen,
     set_auto,
+    update_plans,
 )
 from notices import NOTICE_DISPLAY, NOTICE_VERSION
 from rooms import (
@@ -106,16 +106,18 @@ def scheduler_running(now: datetime) -> bool:
 
 def update_own_plans(user: str, change) -> None:
     """予定ファイルを読み直し、自分の予定だけを change(list) で変えて保存する（他人の予定には触れない）。"""
-    plans = load_plans()
-    others = [p for p in plans if p.get("owner") != user]
-    mine = plans_of(plans, user)
-    change(mine)
-    save_plans(others + mine)
+
+    def change_mine(plans):
+        others = [p for p in plans if p.get("owner") != user]
+        mine = plans_of(plans, user)
+        change(mine)
+        return others + mine
+
+    update_plans(change_mine)
 
 
 def delete_own_plan(user: str, plan_id: str) -> None:
-    plans = load_plans()
-    save_plans([p for p in plans if not (p["id"] == plan_id and p.get("owner") == user)])
+    update_plans(lambda plans: [p for p in plans if not (p["id"] == plan_id and p.get("owner") == user)])
 
 
 st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
