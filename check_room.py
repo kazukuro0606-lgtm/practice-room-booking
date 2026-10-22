@@ -2,6 +2,8 @@
 
   python check_room.py --date 2026-10-25 --start 09:00                  … 確かめていない部屋をすべて
   python check_room.py --date 2026-10-25 --start 09:00 --room E441 E442 … 指定した部屋だけ
+  python check_room.py --date 2026-10-25 --start 09:00 --event-id 999 --user 友達
+      … アプリに未登録の部屋を番号で（list_rooms.py で調べた番号。コースで見える部屋が違うときは、その人のログイン情報で）
 
 部屋ごとに予約登録の画面を開き（Edgeは画面に出さない）、次を書き出す。何も入力せず、ボタンも押さない。
 - 予約登録の画面が出たか（出ないときは、その日時が埋まっている・まだ予約できない等）
@@ -66,13 +68,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", type=date.fromisoformat, required=True, help="調べる日（例：2026-10-25）")
     parser.add_argument("--start", type=time.fromisoformat, required=True, help="調べる開始時刻（例：09:00）")
     parser.add_argument("--room", nargs="*", type=room_key, help="調べる部屋（省略すると、確かめていない部屋をすべて）")
+    parser.add_argument("--event-id", type=int, nargs="*", default=[], help="アプリに未登録の部屋を番号で調べる")
     parser.add_argument("--user", help="誰のログイン情報で開くか（省略すると、本人1人用の保存場所）")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    rooms = args.room or unchecked_rooms()
+    # 調べる対象：(見出し, 番号)
+    targets = [(room_label(r), event_id_of(r)) for r in (args.room or ([] if args.event_id else unchecked_rooms()))]
+    targets += [(f"番号 {n} の部屋", n) for n in args.event_id]
     login_id, password = credentials.load(args.user)
     lines = [f"調べた日時：{args.date} {args.start:%H:%M}"]
     with sync_playwright() as p:
@@ -81,10 +86,10 @@ def main() -> None:
         page.goto(BASE_URL + "/login/")
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
-        for room in rooms:
-            print(f"{room_label(room)} を調べています…")
-            page.goto(add_url(event_id_of(room), args.date, args.start))
-            lines.append(f"\n===== {room_label(room)} =====")
+        for label, event_id in targets:
+            print(f"{label} を調べています…")
+            page.goto(add_url(event_id, args.date, args.start))
+            lines.append(f"\n===== {label} =====")
             lines += form_lines(page)
         browser.close()
     RESULT_FILE.write_text("\n".join(lines), encoding="utf-8")

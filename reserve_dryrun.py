@@ -114,6 +114,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--minutes", type=int, choices=DURATION_CHOICES_MIN, required=True, help="利用時間（分）")
     parser.add_argument("--use-type", default=DEFAULT_USE_TYPE, help="利用区分の表示名（初期値：個人練習）")
     parser.add_argument("--teacher", help="担当教員名（E313 で必須。該当しない場合は AA）")
+    parser.add_argument("--user", help="誰のログイン情報で試すか（省略すると、本人1人用の保存場所）")
     return parser.parse_args()
 
 
@@ -140,7 +141,7 @@ def main() -> None:
     if datetime.now(TOKYO) < opens_at:
         print(f"注意：予約可能日時（{opens_at:%Y-%m-%d %H:%M}）より前なので、確認画面まで進めない可能性があります。")
 
-    login_id, password = credentials.load()
+    login_id, password = credentials.load(args.user)
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="msedge", headless=False)
         page = browser.new_page()

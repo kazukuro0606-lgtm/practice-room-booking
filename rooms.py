@@ -3,6 +3,8 @@
 番号は予約状況の画面の一覧（list_rooms.py、2026-10-22）から写したもの。
 """
 
+import re
+
 from booking_rules import PRACTICE_ENSEMBLE, PRACTICE_SOLO
 from notices import NOTICE_VERSION
 
@@ -141,3 +143,23 @@ def rooms_for_plan(
 
 def needs_members(rooms: list[str]) -> bool:
     return any(r in NEEDS_MEMBERS for r in rooms)
+
+
+# 部屋の選択肢「番号=E311室(…)」から、番号と部屋名（E311）を取り出す
+ROOM_OPTION = re.compile(r"^(\d+)=(E\d{3})")
+
+
+def compare_room_options(options: list[str]) -> list[str]:
+    """部屋の選択肢を、このアプリに登録してある部屋と比べた結果の行。"""
+    found = {m.group(2): int(m.group(1)) for o in options if (m := ROOM_OPTION.match(o))}
+    new = [f"  {room}：番号 {event_id}" for room, event_id in found.items() if room not in ROOM_IDS]
+    changed = [
+        f"  {room}：アプリでは {ROOM_IDS[room]}、画面では {event_id}"
+        for room, event_id in found.items()
+        if room in ROOM_IDS and ROOM_IDS[room] != event_id
+    ]
+    missing = [r for r in ROOM_IDS if r not in found]
+    lines = ["[このアプリに未登録の部屋]"] + (new or ["  なし"])
+    lines += ["[番号が違う部屋]"] + (changed or ["  なし"])
+    lines += ["[アプリにあるが、この画面に出ていない部屋]", "  " + (", ".join(missing) or "なし")]
+    return lines
