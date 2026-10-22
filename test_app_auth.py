@@ -50,7 +50,9 @@ class AppAuthTest(unittest.TestCase):
             app_auth.add_user("kazu", STRONG2)
 
     def test_weak_passwords_are_rejected(self):
-        self.assertIsNotNone(app_auth.password_problem("abc12345"))  # 短い
+        self.assertIsNotNone(app_auth.password_problem("cel7-Tu"))  # 短い（7文字）
+        self.assertIsNone(app_auth.password_problem("cel7-Tun"))  # 8文字はよい
+        self.assertIsNotNone(app_auth.password_problem("abc12345"))  # 推測されやすい並び
         self.assertIsNotNone(app_auth.password_problem("123456789012"))  # 数字だけ
         self.assertIsNotNone(app_auth.password_problem("aaaaaaaaaaab"))  # 同じ文字の繰り返し
         self.assertIsNotNone(app_auth.password_problem("mypassword2026"))  # よく使われる言葉
@@ -93,6 +95,21 @@ class AppAuthTest(unittest.TestCase):
             app_auth.record_failure(f"guess{i}", now + timedelta(seconds=i))
         self.assertIsNotNone(app_auth.login_blocked("kazu", now + timedelta(minutes=1)))
         self.assertIsNone(app_auth.login_blocked("kazu", now + timedelta(minutes=11)))
+
+    def test_rename_keeps_password_and_role(self):
+        app_auth.add_user("kazu", STRONG, is_admin=True)
+        app_auth.add_user("friend1", STRONG2, must_change=True)
+        app_auth.rename_user("friend1", "sato")
+        self.assertEqual(app_auth.list_users(), ["kazu", "sato"])
+        self.assertTrue(app_auth.verify("sato", STRONG2))
+        self.assertFalse(app_auth.verify("friend1", STRONG2))
+        self.assertTrue(app_auth.must_change_password("sato"))
+        self.assertFalse(app_auth.is_admin("sato"))
+        # 使われている名前・使えない文字の名前には変えられない（変えずにそのまま）
+        for bad in ("kazu", "Sato", "s", "sa to"):
+            with self.assertRaises(ValueError):
+                app_auth.rename_user("sato", bad)
+        self.assertEqual(app_auth.list_users(), ["kazu", "sato"])
 
 
 if __name__ == "__main__":

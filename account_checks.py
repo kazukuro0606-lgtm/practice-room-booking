@@ -44,6 +44,11 @@ def delete_check(user: str) -> None:
     _path(user).unlink(missing_ok=True)
 
 
+def rename_check(old: str, new: str) -> None:
+    if _path(old).exists():
+        _path(old).replace(_path(new))
+
+
 def needs_check(user: str) -> bool:
     """予約係が確認を始めるべきか（まだ確認していない・確認待ち）。"""
     check = load_check(user)

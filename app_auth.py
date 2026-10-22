@@ -4,7 +4,7 @@
 最初の管理者は PC の PowerShell で作り、友達のアカウントは管理者が画面から作る。
 
 画面をインターネットに公開しても総当たりされにくいように、
-- パスワードは12文字以上で、単純なものは受け付けない（password_problem）
+- パスワードは8文字以上で、単純なものは受け付けない（password_problem）
 - ログインの失敗を data/login_attempts.json に記録し、ページを開き直しても解除されない制限をかける
   （同じユーザー名で15分に5回失敗 → 15分ロック、全体で10分に30回失敗 → 全員のログインを10分止める）
 
@@ -25,9 +25,9 @@ from pathlib import Path
 USERS_FILE = Path(__file__).parent / "data" / "users.json"
 ATTEMPTS_FILE = Path(__file__).parent / "data" / "login_attempts.json"
 ITERATIONS = 200_000
-MIN_LENGTH = 12
+MIN_LENGTH = 8  # ログインの失敗の制限（ロック）と合わせて総当たりを防ぐ
 # よく使われていて推測されやすいパスワード（これを含むものは受け付けない）
-COMMON_WORDS = ("password", "passw0rd", "qwerty", "12345678", "abcdefgh", "iloveyou", "senzoku", "reservation")
+COMMON_WORDS = ("password", "passw0rd", "qwerty", "123456", "654321", "abc123", "abcdefgh", "iloveyou", "senzoku", "reservation")
 
 USER_FAIL_LIMIT = 5
 USER_FAIL_WINDOW = timedelta(minutes=15)
@@ -70,10 +70,14 @@ def password_problem(password: str, username: str = "") -> str | None:
     return None
 
 
+# 最初のパスワードに使う文字。スマホで打ち間違えやすい・見分けにくい文字（0とo、1とlとi など）は使わない
+PASSWORD_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
 def generate_password() -> str:
-    """友達の最初のパスワードなどに使う、推測されにくいパスワード（16文字前後）。"""
+    """友達の最初のパスワードなどに使う、推測されにくく、スマホでも写しやすいパスワード（例：k7mf-2xqp-h9tw）。"""
     while True:
-        password = secrets.token_urlsafe(12)
+        password = "-".join("".join(secrets.choice(PASSWORD_CHARS) for _ in range(4)) for _ in range(3))
         if password_problem(password) is None:
             return password
 
@@ -102,12 +106,19 @@ def must_change_password(username: str) -> bool:
     return _load().get(username, {}).get("must_change", False)
 
 
-def add_user(username: str, password: str, is_admin: bool = False, must_change: bool = False) -> None:
+def username_problem(username: str) -> str | None:
+    """新しく使うユーザー名に問題があるときは理由を返す。問題なければ None。"""
     if not USERNAME_PATTERN.match(username):
-        raise ValueError("ユーザー名は英小文字・数字・_・- の2〜20文字にしてください")
+        return "ユーザー名は英小文字・数字・_・- の2〜20文字にしてください"
+    if username in _load():
+        return f"{username} はすでに使われています"
+    return None
+
+
+def add_user(username: str, password: str, is_admin: bool = False, must_change: bool = False) -> None:
+    if problem := username_problem(username):
+        raise ValueError(problem)
     users = _load()
-    if username in users:
-        raise ValueError(f"{username} はすでにあります")
     users[username] = _record(username, password, is_admin, must_change)
     _save(users)
 
@@ -117,6 +128,17 @@ def set_password(username: str, password: str, must_change: bool = False) -> Non
     if username not in users:
         raise ValueError(f"{username} というアカウントはありません")
     users[username] = _record(username, password, users[username]["is_admin"], must_change)
+    _save(users)
+
+
+def rename_user(old: str, new: str) -> None:
+    """アカウントのユーザー名を変える（パスワード・管理者かどうかはそのまま）。"""
+    if problem := username_problem(new):
+        raise ValueError(problem)
+    users = _load()
+    if old not in users:
+        raise ValueError(f"{old} というアカウントはありません")
+    users[new] = users.pop(old)
     _save(users)
 
 

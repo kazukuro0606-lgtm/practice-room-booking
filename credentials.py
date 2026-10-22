@@ -53,6 +53,13 @@ def delete(user: str | None = None) -> None:
             pass
 
 
+def rename(old: str, new: str) -> None:
+    """ユーザー名を変えたときに、保存したログイン情報を新しい名前の保存場所に移す。"""
+    if has(old):
+        store(new, *load(old))
+        delete(old)
+
+
 def copy_legacy_to(user: str) -> bool:
     """本人1人用の保存場所にあるログイン情報を、そのユーザーの保存場所に写す（まだないときだけ）。"""
     if has(user) or not has(None):

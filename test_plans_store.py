@@ -105,6 +105,15 @@ class PlansStoreTest(unittest.TestCase):
             self.assertIn("last_run", saved[pid])
         self.assertFalse(plans_store._lock_file().exists())
 
+    def test_rename_owner_moves_plans_and_settings(self):
+        save_plans([{**plan("a", "2026-10-26", 60, STATUS_PLANNED), "owner": "friend1"},
+                    {**plan("b", "2026-10-26", 60, STATUS_PLANNED), "owner": "kazu"}])
+        save_settings("friend1", {**plans_store.DEFAULT_SETTINGS, "onboarded_version": 1})
+        plans_store.rename_owner("friend1", "sato")
+        self.assertEqual({p["id"]: p["owner"] for p in load_plans()}, {"a": "sato", "b": "kazu"})
+        self.assertEqual(load_settings("sato")["onboarded_version"], 1)
+        self.assertEqual(load_settings("friend1"), plans_store.DEFAULT_SETTINGS)
+
     def test_stale_lock_is_removed(self):
         save_plans([plan("x", "2026-10-26", 30, STATUS_PLANNED)])
         lock = plans_store._lock_file()

@@ -191,6 +191,19 @@ def delete_user_data(owner: str) -> None:
     _settings_file(owner).unlink(missing_ok=True)
 
 
+def rename_owner(old: str, new: str) -> None:
+    """ユーザー名を変えたときに、その人の予定と設定を新しい名前に移す。"""
+
+    def change(plans):
+        for p in plans:
+            if p.get("owner") == old:
+                p["owner"] = new
+
+    update_plans(change)
+    if _settings_file(old).exists():
+        _settings_file(old).replace(_settings_file(new))
+
+
 def mark_booked(plan_id: str, room: str, by: str) -> None:
     """予約完了に切り替える。自動予約の実行中に画面で編集されていてもよいように、読み直してから書く。"""
 

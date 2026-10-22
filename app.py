@@ -53,6 +53,7 @@ from plans_store import (
     load_settings,
     new_id,
     plans_of,
+    rename_owner,
     save_settings,
     scheduler_last_seen,
     set_auto,
@@ -206,14 +207,16 @@ def require_login() -> str:
         st.error("アカウントがまだありません。PCのPowerShellで `python app_auth.py add-admin ユーザー名` を実行してください。")
         st.stop()
     with st.form("login"):
-        username = st.text_input("ユーザー名")
-        password = st.text_input("パスワード", type="password")
+        # スマホのパスワード管理（iPhone のキーチェーンなど）が、ユーザー名とパスワードを自動で入れられるようにする
+        username = st.text_input("ユーザー名", autocomplete="username")
+        password = st.text_input("パスワード", type="password", autocomplete="current-password")
         if st.form_submit_button("ログイン"):
-            username = username.strip()
+            username = username.strip().lower()
             if blocked := app_auth.login_blocked(username, now):
                 st.error(blocked)
                 st.stop()
-            if app_auth.verify(username, password):
+            # コピーして貼り付けたときに前後に入りがちな空白・改行は除いて確かめる（パスワードに空白は使わない前提）
+            if app_auth.verify(username, password) or app_auth.verify(username, password.strip()):
                 app_auth.clear_failures(username)
                 st.session_state["user"] = username
                 st.session_state["last_active"] = now
@@ -232,28 +235,52 @@ def require_login() -> str:
     st.stop()
 
 
+def rename_account(old: str, new: str) -> None:
+    """ユーザー名を変え、その人の予定・設定・予約サイトのログイン情報・アカウントの確認結果も新しい名前に移す。"""
+    app_auth.rename_user(old, new)  # 使えない名前なら、ここで止まり何も移さない
+    rename_owner(old, new)
+    credentials.rename(old, new)
+    account_checks.rename_check(old, new)
+
+
 def require_password_change(user: str) -> None:
-    """パスワードを変える必要がある人には、変えるまで変更の欄だけを出す。"""
+    """パスワードを変える必要がある人には、変えるまで変更の欄だけを出す。
+
+    管理者が作った最初のアカウント（最初のパスワードのまま）なら、ユーザー名もここで変えられる。
+    """
     if not st.session_state.get("must_change"):
         return
-    st.title("パスワードを変えてください")
+    can_rename = app_auth.must_change_password(user)
+    st.title("ユーザー名とパスワードを決めてください" if can_rename else "パスワードを変えてください")
+    if can_rename:
+        st.write(
+            "ユーザー名は、管理者が付けたもののままでも、好きなものに変えてもかまいません"
+            "（英小文字・数字・_・- の2〜20文字）。変えたら、次からは新しいユーザー名でログインします。"
+        )
     st.write(
         f"使い始める前に、自分だけが知っているパスワードに変えてください。{app_auth.MIN_LENGTH}文字以上で、"
         "数字だけ・ユーザー名を含む・よく使われる言葉を含むものは使えません。予約サイトのパスワードとは別のものにしてください。"
     )
     with st.form("forced_change", clear_on_submit=True):
-        new = st.text_input("新しいパスワード", type="password")
-        again = st.text_input("もう一度", type="password")
-        if st.form_submit_button("変更する"):
+        name = st.text_input("ユーザー名", value=user, autocomplete="username") if can_rename else user
+        new = st.text_input("新しいパスワード", type="password", autocomplete="new-password")
+        again = st.text_input("もう一度", type="password", autocomplete="new-password")
+        if st.form_submit_button("決定する" if can_rename else "変更する"):
+            name = name.strip()
+            renaming = name != user
             if new != again:
                 st.error("2回の入力が一致しません。")
+            elif renaming and (problem := app_auth.username_problem(name)):
+                st.error(problem)
+            elif problem := app_auth.password_problem(new, name):
+                st.error(problem)
             else:
-                try:
-                    app_auth.set_password(user, new)
-                    st.session_state["must_change"] = False
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
+                if renaming:
+                    rename_account(user, name)
+                    st.session_state["user"] = name
+                app_auth.set_password(name, new)
+                st.session_state["must_change"] = False
+                st.rerun()
     if st.button("ログアウト"):
         st.session_state.clear()
         st.rerun()
@@ -465,8 +492,12 @@ if admin:
                 try:
                     app_auth.add_user(new_name.strip(), first_password, must_change=True)
                     st.success(f"{new_name} を作りました。次のユーザー名と最初のパスワードを、本人だけに伝えてください（この表示は一度だけです）。")
-                    st.code(f"ユーザー名：{new_name.strip()}\n最初のパスワード：{first_password}", language=None)
-                    st.caption("本人は最初のログインで、自分のパスワードに変えるよう求められます。")
+                    # 枠の右上のボタンで、それぞれだけをコピーできる
+                    st.caption("ユーザー名")
+                    st.code(new_name.strip(), language=None)
+                    st.caption("最初のパスワード")
+                    st.code(first_password, language=None)
+                    st.caption("本人は最初のログインで、ユーザー名を好きなものに変えられ、自分のパスワードに変えるよう求められます。")
                 except ValueError as e:
                     st.error(str(e))
         others = [u for u in app_auth.list_users() if u != user]
@@ -477,6 +508,7 @@ if admin:
                 app_auth.set_password(target, reset_to, must_change=True)
                 app_auth.clear_failures(target)
                 st.success(f"{target} のパスワードを設定し直しました。次のパスワードを本人だけに伝えてください（この表示は一度だけです）。")
+                st.caption("新しいパスワード（枠の右上のボタンでコピーできます）")
                 st.code(reset_to, language=None)
                 st.caption("本人は次のログインで、自分のパスワードに変えるよう求められます。ロックも解除しました。")
             confirm = st.checkbox(f"{target} の予定・設定・予約サイトのログイン情報もすべて削除することを確認しました")
