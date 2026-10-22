@@ -29,6 +29,7 @@ from booking_rules import (
     end_datetime,
     start_datetime,
 )
+from check_room import mask_numbers
 from inspect_page import safe_url
 from plans_store import (
     AUTO_RUNNING,
@@ -81,6 +82,31 @@ def wait_until(target: datetime, label: str) -> None:
         print(f"\r{label}（{target:%m/%d %H:%M:%S}）まであと {int(remaining)} 秒   ", end="", flush=True)
         clock.sleep(min(remaining, 1))
     print()
+
+
+# 確認画面に表示されるメッセージのうち、予約できない理由らしい行を拾う言葉
+REASON_WORDS = ("できません", "できない", "エラー", "超え", "上限", "不可", "重複", "既に", "すでに", "期間", "受付", "ありません")
+# 確認画面に「登録」ボタンが出るのを待つ時間
+REGISTER_WAIT_MS = 5_000
+
+
+def page_reason(page: Page) -> str:
+    """確認画面などに出ている、予約できない理由らしい文を短く取り出す（学籍番号などの数字の並びは伏せる）。"""
+    try:
+        lines = [line.strip() for line in page.inner_text("body").splitlines() if line.strip()]
+    except Exception:
+        return "画面の文字を読めませんでした"
+    picked = [line for line in lines if any(word in line for word in REASON_WORDS)][:3]
+    text = " / ".join(picked) if picked else f"画面の見出し：{page.title()}"
+    return mask_numbers(text)[:200]
+
+
+def has_register_button(page: Page) -> bool:
+    try:
+        page.locator("#register").wait_for(state="visible", timeout=REGISTER_WAIT_MS)
+        return True
+    except Exception:
+        return False
 
 
 def register(page: Page) -> bool:
@@ -188,7 +214,9 @@ def run(args: argparse.Namespace) -> None:
     login_id, password = credentials.load(args.user)
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="msedge", headless=args.unattended)
-        page = browser.new_page()
+        # タブを開き直してもログインが続くように、同じコンテキスト（Cookie の入れ物）からタブを作る
+        context = browser.new_context()
+        page = context.new_page()
         page.goto(BASE_URL + "/login/")
         if LOGIN_PATH in page.url:
             login(page, login_id, password)
@@ -201,6 +229,7 @@ def run(args: argparse.Namespace) -> None:
         completed = False
         declined = False
         full_rooms = []
+        problems = []  # 埋まっている以外の理由で予約できなかった部屋と、その理由
         for room in rooms:
             print(f"{room} を試しています…")
             room_members = members if room in NEEDS_MEMBERS else None
@@ -216,6 +245,19 @@ def run(args: argparse.Namespace) -> None:
             except NotReached:
                 print(f"  {room} は確認画面まで進めませんでした（埋まっている可能性があります）。")
                 full_rooms.append(room)
+                continue
+            except Exception as e:
+                # 画面が時間内に開かない等。この部屋はあきらめて、次の部屋を試す（例外の文面は入力値を含みうるので出さない）
+                print(f"  {room} は画面が正しく開きませんでした（{type(e).__name__}）。次の部屋を試します。")
+                problems.append(f"{room}：画面が開かなかった（{type(e).__name__}）")
+                # 読み込みに失敗したタブで次の画面を開くと「割り込まれた」と失敗することがあるので、新しいタブに替える
+                page.close()
+                page = context.new_page()
+                continue
+            if not has_register_button(page):
+                reason = page_reason(page)
+                print(f"  {room} は確認画面に「登録」ボタンがありませんでした。画面の表示：{reason}")
+                problems.append(f"{room}：確認画面に登録ボタンなし（{reason}）")
                 continue
             if not args.yes:
                 answer = input(f"  {room} の確認画面です。Edgeで内容を確認し、予約するなら y と入力して Enter：")
@@ -238,6 +280,11 @@ def run(args: argparse.Namespace) -> None:
         elif declined:
             result = "確認画面で送信をやめた"
             print("予約は送信していません。")
+        elif problems:
+            result = "予約できなかった：" + "／".join(problems)
+            if full_rooms:
+                result += f"／ほか{len(full_rooms)}室は確認画面まで進めなかった"
+            print(f"試した{len(rooms)}室とも予約できませんでした。予約は送信していません。")
         else:
             result = f"空きなし（{len(full_rooms)}室とも確認画面まで進めなかった）"
             print(f"試した{len(full_rooms)}室とも予約できませんでした。予約は送信していません。")

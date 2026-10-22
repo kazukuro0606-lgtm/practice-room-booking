@@ -9,6 +9,7 @@
 - 止めるときは Ctrl + C（実行中の自動予約はそのまま最後まで動く）。
 """
 
+import os
 import subprocess
 import sys
 import time as clock
@@ -57,6 +58,8 @@ def launch(plan: dict) -> subprocess.Popen:
         stdout=log,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
+        # ログを UTF-8 で書く（Windows の初期設定の文字コードだと、Get-Content -Encoding UTF8 で文字化けする）
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
