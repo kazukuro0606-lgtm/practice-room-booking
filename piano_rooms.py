@@ -22,6 +22,11 @@ from reserve_dryrun import BASE_URL
 RESULT_FILE = Path(__file__).parent / "piano_result.txt"
 SHOT_DIR = Path(__file__).parent / "piano_shots"  # タグの欄の写真（Git対象外）
 PIANO_TAGS = ("グランドピアノ", "アップライトピアノ", "ピアノなし", "電子ピアノ")
+# タグのチェック欄の値（2026-10-22 の予約状況の画面：name="tag[2][tag_item][]"）
+TAG_VALUES = {"グランドピアノ": 12, "アップライトピアノ": 13, "ピアノなし": 14, "電子ピアノ": 35}
+# 絞り込みは画面の裏で表を読み直すので、部屋の一覧がこの回数続けて同じになるまで待つ（最大 SETTLE_SECONDS 秒）
+SETTLE_READS = 4
+SETTLE_SECONDS = 25
 ROOM_NAME = re.compile(r"[A-Z]{1,3}\d{2,4}室")
 
 # 画面に見えている要素のうち、その要素自身の文字が部屋の名前だけのもの（表の見出しなど）。
@@ -46,6 +51,25 @@ def rooms_on_page(page: Page) -> list[str]:
         if name not in seen:
             seen.append(name)
     return seen
+
+
+def settled_rooms(page: Page, before: list[str]) -> tuple[list[str], float]:
+    """表の読み直しが終わるのを待って、出ている部屋を返す。(部屋, 待った秒数)。
+
+    一覧が絞り込み前から変わってから SETTLE_READS 回続けて同じになったら終わり。変わらないまま時間が来たら、そのときの一覧。
+    """
+    waited = 0.0
+    last: list[str] = []
+    same = 0
+    while waited < SETTLE_SECONDS:
+        page.wait_for_timeout(500)
+        waited += 0.5
+        rooms = rooms_on_page(page)
+        same = same + 1 if rooms == last else 0
+        last = rooms
+        if rooms != before and same >= SETTLE_READS:
+            break
+    return last, waited
 
 
 def open_calendar(page: Page) -> None:
@@ -93,7 +117,6 @@ def click_tag(page: Page, label: str) -> None:
         page.wait_for_timeout(800)
     panel.get_by_text(label).first.click()
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(4000)  # 絞り込みが画面の中だけで行われる場合に備えて少し待つ
 
 
 def main() -> None:
@@ -126,8 +149,8 @@ def main() -> None:
             except Exception as e:
                 lines.append(f"  押せませんでした（{type(e).__name__}）")
                 continue
-            rooms = rooms_on_page(page)
-            lines.append(f"  押した後の URL={safe_url(page.url)}")
+            rooms, waited = settled_rooms(page, all_rooms)
+            lines.append(f"  押した後の URL={safe_url(page.url)}（一覧が落ち着くまで {waited:.1f}秒待った）")
             lines.append(f"  押した後のタグ：{tag_info(page, label)}")
             lines.append(f"  出ている部屋（{len(rooms)}室）：{', '.join(rooms) or 'なし'}")
             lines.append(f"  タグの欄の写真：{shoot_panel(page, f'{number}_after')}")
@@ -136,6 +159,11 @@ def main() -> None:
                 lines.append(f"  もう一度押して戻した後のタグ：{tag_info(page, label)}")
             except Exception as e:
                 lines.append(f"  戻せませんでした（{type(e).__name__}）")
+            # 別の確かめ方：タグを付けたアドレスで開く（予約サイトがこの形を受け付けるなら、押すより確実）
+            page.goto(BASE_URL + f"/reserve/calendar?tag[2][tag_item][]={TAG_VALUES[label]}")
+            page.wait_for_load_state("networkidle")
+            by_url, waited = settled_rooms(page, all_rooms)
+            lines.append(f"  アドレスで開いたとき（{waited:.1f}秒待った）：{len(by_url)}室：{', '.join(by_url) or 'なし'}")
         browser.close()
 
     RESULT_FILE.write_text("\n".join(lines), encoding="utf-8")
