@@ -52,6 +52,23 @@ PIANO_ROOMS = {"E241", "E242", "E243", "E244", "E245", "E246", "E252", "E311"}
 COURSE_ROOMS = WIND_ONLY_ROOMS | PIANO_ROOMS
 VERIFIED_ROOMS = PLAIN_ROOMS | NOTICE_ROOMS
 
+# 部屋のピアノ（予約状況の画面の「タグから絞り込み」のピアノで調べた結果。piano_rooms.py、2026-10-22）
+PIANO_GRAND_LABEL = "グランド"
+PIANO_UPRIGHT_LABEL = "アップライト"
+PIANO_NONE_LABEL = "ピアノなし"
+PIANO_UNKNOWN_LABEL = "ピアノ不明"
+PIANO_KINDS = (PIANO_GRAND_LABEL, PIANO_UPRIGHT_LABEL, PIANO_NONE_LABEL, PIANO_UNKNOWN_LABEL)
+_PIANO_NONE = {"E224", "E229", "E230", "E234", "E238", "E324", "E329", "E330", "E334", "E338"}
+PIANO_ROOMS_BY_KIND = {
+    PIANO_GRAND_LABEL: {"E215", "E241", "E242", "E243", "E244", "E245", "E246", "E251", "E252", "E311", "E313",
+                        "E341", "E342", "E343", "E344", "E345", "E346",
+                        "E351", "E352", "E353", "E354", "E355", "E356", "E414", "E415"},
+    PIANO_UPRIGHT_LABEL: {"E220", "E221", "E222", "E223", "E225", "E226", "E227", "E228", "E231", "E232", "E233",
+                          "E235", "E236", "E237", "E312", "E320", "E321", "E322", "E323", "E325", "E326", "E327",
+                          "E328", "E331", "E332", "E333", "E335", "E336", "E337"},
+    PIANO_NONE_LABEL: _PIANO_NONE,
+}
+
 # 部屋ごとの決まり
 MAX_MINUTES = {r: 120 for r in NOTICE_ROOMS}  # 予約サイトで選べる利用時間の上限（書いていない部屋は3時間）
 NEEDS_MEMBERS = NOTICE_ROOMS  # 注意事項の確認と同時利用者の入力が必須
@@ -77,6 +94,18 @@ def event_id_of(room: str) -> int:
 def room_label(room: str) -> str:
     note = ROOM_NOTES.get(room)
     return f"{room}室({note})" if note else f"{room}室"
+
+
+def piano_of(room: str) -> str:
+    """部屋のピアノの種類（PIANO_KINDS のどれか）。まだ調べていない部屋は「ピアノ不明」。"""
+    for kind, rooms in PIANO_ROOMS_BY_KIND.items():
+        if room in rooms:
+            return kind
+    return PIANO_UNKNOWN_LABEL
+
+
+def room_label_with_piano(room: str) -> str:
+    return f"{room_label(room)}・{piano_of(room)}"
 
 
 def usable_rooms(approved: bool, has_teacher: bool = False, visible: set[str] | None = None) -> list[str]:

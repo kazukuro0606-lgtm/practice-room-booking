@@ -73,5 +73,18 @@ class RoomsTest(unittest.TestCase):
         self.assertFalse(needs_members(["E320"]))
 
 
+    def test_piano_kinds_cover_rooms_without_overlap(self):
+        from rooms import PIANO_ROOMS_BY_KIND, PIANO_UNKNOWN_LABEL, piano_of
+        groups = list(PIANO_ROOMS_BY_KIND.values())
+        for i, a in enumerate(groups):
+            self.assertTrue(a <= set(ROOM_IDS))
+            for b in groups[i + 1:]:
+                self.assertFalse(a & b)
+        self.assertEqual(piano_of("E320"), "アップライト")
+        self.assertEqual(piano_of("E341"), "グランド")
+        self.assertEqual(piano_of("E324"), "ピアノなし")
+        self.assertEqual(piano_of("E452"), PIANO_UNKNOWN_LABEL)  # まだ調べていない
+
+
 if __name__ == "__main__":
     unittest.main()

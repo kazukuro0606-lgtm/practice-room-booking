@@ -73,7 +73,10 @@ from rooms import (
     needs_members,
     notice_approved,
     permissions,
+    PIANO_KINDS,
+    piano_of,
     room_label,
+    room_label_with_piano,
     rooms_for_plan,
     rooms_setting,
     usable_rooms,
@@ -103,7 +106,7 @@ def fmt(dt) -> str:
 
 
 def rooms_text(rooms: list[str]) -> str:
-    return "、".join(room_label(r) for r in rooms)
+    return "、".join(room_label_with_piano(r) for r in rooms)
 
 
 def plan_rooms_text(plan: dict) -> str:
@@ -496,14 +499,25 @@ with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.ses
     )
     if my_visible is None:
         st.caption("予約係があなたのアカウントを確かめるまでは、コース専用の部屋（管楽器の部屋など）は選べません。")
+    pianos = st.pills(
+        "ピアノで絞り込む（選んだ種類の部屋だけを、下の一覧に出します）",
+        PIANO_KINDS,
+        selection_mode="multi",
+        default=list(PIANO_KINDS),
+        key="piano_filter",
+    )
     chosen = {}
     for practice in PRACTICE_TYPES:
+        key = f"rooms_{practice}"
+        # 選んである部屋は、絞り込みで外れても一覧に残す（外すときは × で外す）
+        selected = st.session_state.get(key, my_rooms[practice])
+        options = [r for r in usable_rooms(**perms) if piano_of(r) in pianos or r in selected]
         chosen[practice] = st.multiselect(
             f"{practice}で使う部屋（選んだ順に試します）",
-            usable_rooms(**perms),
-            default=my_rooms[practice],
-            format_func=room_label,
-            key=f"rooms_{practice}",
+            options,
+            default=[r for r in my_rooms[practice] if r in options],
+            format_func=room_label_with_piano,
+            key=key,
         )
     teacher_name = st.text_input(
         "担当教員名（E313 の予約で必須。主科の担当教員名、該当しない場合は AA）",
