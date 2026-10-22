@@ -22,6 +22,34 @@ from list_rooms import COLLECT_OPTIONS_JS
 from reserve_dryrun import BASE_URL, add_url
 from rooms import ROOM_IDS, ROOM_OPTION
 
+# try_login の結果
+LOGIN_OK = "ok"
+LOGIN_WRONG = "wrong"  # ログインできなかった（ログインIDかパスワードが違う可能性が高い）
+LOGIN_UNREACHABLE = "unreachable"  # 予約サイトやEdgeを開けなかった（入力値の正しさは分からない）
+
+
+def try_login(login_id: str, password: str, base_url: str = BASE_URL) -> str:
+    """入力されたログインIDとパスワードで予約サイトにログインできるかだけを確かめる（保存する前に使う）。"""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="msedge", headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(base_url + "/login/")
+                if LOGIN_PATH not in page.url or not page.locator("#login_id").count():
+                    return LOGIN_UNREACHABLE
+                try:
+                    login(page, login_id, password)
+                except SystemExit:
+                    return LOGIN_WRONG
+                return LOGIN_OK
+            finally:
+                browser.close()
+    except Exception:
+        # 例外の文面に入力値が含まれる可能性があるので、中身は使わない
+        return LOGIN_UNREACHABLE
+
+
 # 未登録の部屋の予約画面を開くときに試す時刻（埋まっていると画面が出ないので、いくつか試す）
 PROBE_TIMES = (time(9, 0), time(13, 0), time(17, 0))
 

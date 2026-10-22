@@ -6,11 +6,13 @@
 """
 
 import time as time_module
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 import streamlit.components.v1 as components
 
+import account_check
 import account_checks
 import app_auth
 import credentials
@@ -77,6 +79,10 @@ SESSION_TIMEOUT = timedelta(minutes=30)
 # 予約係はこの間隔より短く「動いている印」を書く。これより古ければ止まっているとみなす
 SCHEDULER_TIMEOUT = timedelta(minutes=2)
 PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
+# 予約サイトのログイン情報を保存する前の確認で、この時間内にこの回数ログインできなければ、しばらく試させない
+# （何度も間違えると、予約サイト側でアカウントが止められるおそれがあるため）
+SITE_LOGIN_WINDOW = timedelta(minutes=15)
+SITE_LOGIN_MAX_FAILURES = 3
 
 
 def duration_label(minutes: int) -> str:
@@ -103,6 +109,38 @@ def plan_rooms_text(plan: dict) -> str:
 def scheduler_running(now: datetime) -> bool:
     last_seen = scheduler_last_seen()
     return last_seen is not None and now - last_seen < SCHEDULER_TIMEOUT
+
+
+@st.cache_resource
+def site_login_failures() -> dict[str, list[datetime]]:
+    """人ごとの、保存前の確認でログインできなかった時刻（画面を開き直しても、ログインし直しても続く）。"""
+    return {}
+
+
+def verify_site_login(user: str, login_id: str, password: str, now: datetime) -> str | None:
+    """予約サイトにログインできるか確かめる。保存してよければ None、だめなら理由を返す。"""
+    login_id = login_id.strip()
+    if not login_id or not password:
+        return "ログインIDとパスワードの両方を入力してください。"
+    failures = [t for t in site_login_failures().get(user, []) if now - t < SITE_LOGIN_WINDOW]
+    site_login_failures()[user] = failures
+    if len(failures) >= SITE_LOGIN_MAX_FAILURES:
+        wait = int((failures[0] + SITE_LOGIN_WINDOW - now).total_seconds() // 60) + 1
+        return (f"ログインできない入力が続いたため、確認を止めています。{wait}分ほど待ってから、"
+                "ログインIDとパスワードを確かめて入れ直してください（予約サイトのアカウントが止められるのを防ぐためです）。")
+    with st.spinner("予約サイトにログインできるか確かめています（20秒ほどかかることがあります）…"):
+        # Playwright は、画面の処理とは別のスレッドで動かす
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(account_check.try_login, login_id, password).result()
+    if result == account_check.LOGIN_OK:
+        site_login_failures().pop(user, None)
+        return None
+    if result == account_check.LOGIN_WRONG:
+        failures.append(now)
+        left = SITE_LOGIN_MAX_FAILURES - len(failures)
+        return ("予約サイトにログインできませんでした。ログインIDとパスワードを確かめてください。保存していません。"
+                + (f"（あと{left}回まで試せます）" if left > 0 else ""))
+    return "予約サイトを開けなかったため、確かめられませんでした。保存していません。少し待ってから、もう一度保存してください。"
 
 
 def update_own_plans(user: str, change) -> None:
@@ -298,8 +336,9 @@ elif check_status == STATUS_ERROR:
     credentials_title = "（確かめられませんでした）"
 else:
     credentials_title = "（予約係が確かめています）"
+just_saved = st.session_state.pop("site_login_saved", False)
 with st.expander("予約サイトのログイン情報" + credentials_title,
-                 expanded=not has_credentials or check_status in (STATUS_LOGIN_FAILED, STATUS_ERROR)):
+                 expanded=just_saved or not has_credentials or check_status in (STATUS_LOGIN_FAILED, STATUS_ERROR)):
     st.caption(
         "自動予約は、あなたのログインIDとパスワードで予約サイトにログインして予約します。"
         "入力した内容は、予約係のPCの資格情報マネージャーに保存され、この画面には表示されません。"
@@ -308,16 +347,23 @@ with st.expander("予約サイトのログイン情報" + credentials_title,
         login_id = st.text_input("予約サイトのログインID")
         site_password = st.text_input("予約サイトのパスワード", type="password")
         if st.form_submit_button("保存する"):
-            try:
-                credentials.store(user, login_id, site_password)
-                # 予約係が、ログインできるか・あなたに見える部屋を確かめる
-                request_check(user)
-                st.rerun()
-            except ValueError as e:
-                st.error(str(e))
+            # 保存する前に、その入力で予約サイトにログインできるか確かめる
+            if problem := verify_site_login(user, login_id, site_password, datetime.now(TOKYO)):
+                st.error(problem)
+            else:
+                try:
+                    credentials.store(user, login_id, site_password)
+                    # 予約係が、あなたに見える部屋を確かめる
+                    request_check(user)
+                    st.session_state["site_login_saved"] = True
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+    if just_saved:
+        st.success("予約サイトにログインできることを確かめて、保存しました。")
     if has_credentials:
         if check_status in (None, STATUS_QUEUED, STATUS_RUNNING):
-            st.info("予約係が、このログイン情報でログインできるか・あなたに見える部屋を確かめています（数分かかります）。再読み込みすると結果が出ます。")
+            st.info("予約係が、あなたに見える部屋を確かめています（数分かかります）。再読み込みすると結果が出ます。")
         elif check_status == STATUS_OK:
             st.success(f"ログインできました（{check['checked_at']}）。予約サイトであなたに見える部屋：{len(check.get('visible_rooms', {}))}室。")
         else:
