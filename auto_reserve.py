@@ -86,6 +86,8 @@ def wait_until(target: datetime, label: str) -> None:
 
 # 確認画面に表示されるメッセージのうち、予約できない理由らしい行を拾う言葉
 REASON_WORDS = ("できません", "できない", "エラー", "超え", "上限", "不可", "重複", "既に", "すでに", "期間", "受付", "ありません")
+# この言葉が理由に含まれるときは、本人の申し込み数が予約サイトの上限に達している。どの部屋でも同じなので、ほかの部屋は試さない
+LIMIT_WORDS = ("申し込み数", "申込数", "申し込み件数", "申込件数")
 # 確認画面に「登録」ボタンが出るのを待つ時間
 REGISTER_WAIT_MS = 5_000
 
@@ -258,6 +260,10 @@ def run(args: argparse.Namespace) -> None:
                 reason = page_reason(page)
                 print(f"  {room} は確認画面に「登録」ボタンがありませんでした。画面の表示：{reason}")
                 problems.append(f"{room}：確認画面に登録ボタンなし（{reason}）")
+                if any(word in reason for word in LIMIT_WORDS):
+                    print("  申し込み数が予約サイトの上限に達しているため、ほかの部屋は試しません。")
+                    problems.append("申し込み数が上限のため、ほかの部屋は試さなかった")
+                    break
                 continue
             if not args.yes:
                 answer = input(f"  {room} の確認画面です。Edgeで内容を確認し、予約するなら y と入力して Enter：")
@@ -284,7 +290,7 @@ def run(args: argparse.Namespace) -> None:
             result = "予約できなかった：" + "／".join(problems)
             if full_rooms:
                 result += f"／ほか{len(full_rooms)}室は確認画面まで進めなかった"
-            print(f"試した{len(rooms)}室とも予約できませんでした。予約は送信していません。")
+            print("予約できませんでした。予約は送信していません。")
         else:
             result = f"空きなし（{len(full_rooms)}室とも確認画面まで進めなかった）"
             print(f"試した{len(full_rooms)}室とも予約できませんでした。予約は送信していません。")
