@@ -31,7 +31,7 @@
 
 ## 3. 公開が続いているか確かめる
 
-PCを再起動した後なども、`tailscale funnel status` で公開が続いているか確かめられます。公開をやめるときは `tailscale funnel reset`。
+PCを再起動した後なども、`tailscale funnel status` で公開が続いているか確かめられます。公開をやめるときは `tailscale funnel --https=443 off`。
 
 ## 4. 最初の予約を見守る
 
