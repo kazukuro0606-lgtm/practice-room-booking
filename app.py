@@ -52,7 +52,8 @@ from rooms import (
     usable_rooms,
 )
 
-MAX_LOGIN_FAILURES = 5
+# この時間操作がなければログアウトする
+SESSION_TIMEOUT = timedelta(minutes=30)
 # 予約係はこの間隔より短く「動いている印」を書く。これより古ければ止まっているとみなす
 SCHEDULER_TIMEOUT = timedelta(minutes=2)
 PRACTICE_TYPES = [PRACTICE_SOLO, PRACTICE_ENSEMBLE]
@@ -102,36 +103,81 @@ st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
 
 
 def require_login() -> str:
-    """ログインするまで、ほかの表示を止める。ログインした人のユーザー名を返す。"""
+    """ログインするまで、ほかの表示を止める。ログインした人のユーザー名を返す。
+
+    一定時間操作がなければログアウトする。ログインの失敗の制限は app_auth が記録し、ページを開き直しても続く。
+    """
+    now = datetime.now(TOKYO)
     if user := st.session_state.get("user"):
+        if now - st.session_state.get("last_active", now) > SESSION_TIMEOUT:
+            st.session_state.clear()
+            st.session_state["timed_out"] = True
+            st.rerun()
+        st.session_state["last_active"] = now
         return user
     st.title("練習室予約の予定登録")
+    if st.session_state.pop("timed_out", False):
+        st.info(f"{int(SESSION_TIMEOUT.total_seconds() // 60)}分間操作がなかったため、ログアウトしました。")
     if not app_auth.has_users():
         st.error("アカウントがまだありません。PCのPowerShellで `python app_auth.py add-admin ユーザー名` を実行してください。")
-        st.stop()
-    failures = st.session_state.get("login_failures", 0)
-    if failures >= MAX_LOGIN_FAILURES:
-        st.error("パスワードを続けて間違えたため、ロックしました。ページを開き直してください。")
         st.stop()
     with st.form("login"):
         username = st.text_input("ユーザー名")
         password = st.text_input("パスワード", type="password")
         if st.form_submit_button("ログイン"):
             username = username.strip()
+            if blocked := app_auth.login_blocked(username, now):
+                st.error(blocked)
+                st.stop()
             if app_auth.verify(username, password):
+                app_auth.clear_failures(username)
                 st.session_state["user"] = username
+                st.session_state["last_active"] = now
+                # 管理者が決めたパスワードのまま、または今の基準より弱いパスワードなら、変えるまで使わせない
+                st.session_state["must_change"] = app_auth.must_change_password(username) or bool(
+                    app_auth.password_problem(password, username)
+                )
                 if app_auth.is_admin(username):
                     # 複数人対応の前の予定・設定・ログイン情報を、管理者のものとして引き継ぐ
                     claim_legacy(username)
                     credentials.copy_legacy_to(username)
                 st.rerun()
-            st.session_state["login_failures"] = failures + 1
+            app_auth.record_failure(username, now)
             time_module.sleep(1)  # 総当たりを遅くする
             st.error("ユーザー名かパスワードが違います。")
     st.stop()
 
 
+def require_password_change(user: str) -> None:
+    """パスワードを変える必要がある人には、変えるまで変更の欄だけを出す。"""
+    if not st.session_state.get("must_change"):
+        return
+    st.title("パスワードを変えてください")
+    st.write(
+        f"使い始める前に、自分だけが知っているパスワードに変えてください。{app_auth.MIN_LENGTH}文字以上で、"
+        "数字だけ・ユーザー名を含む・よく使われる言葉を含むものは使えません。予約サイトのパスワードとは別のものにしてください。"
+    )
+    with st.form("forced_change", clear_on_submit=True):
+        new = st.text_input("新しいパスワード", type="password")
+        again = st.text_input("もう一度", type="password")
+        if st.form_submit_button("変更する"):
+            if new != again:
+                st.error("2回の入力が一致しません。")
+            else:
+                try:
+                    app_auth.set_password(user, new)
+                    st.session_state["must_change"] = False
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+    if st.button("ログアウト"):
+        st.session_state.clear()
+        st.rerun()
+    st.stop()
+
+
 user = require_login()
+require_password_change(user)
 admin = app_auth.is_admin(user)
 
 st.title("練習室予約の予定登録")
@@ -223,24 +269,25 @@ if admin:
         with st.form("add_user", clear_on_submit=True):
             st.write("アカウントを作る")
             new_name = st.text_input("ユーザー名（英小文字・数字・_・- の2〜20文字）")
-            new_password = st.text_input("最初のパスワード（8文字以上）", type="password")
             if st.form_submit_button("作る"):
+                first_password = app_auth.generate_password()
                 try:
-                    app_auth.add_user(new_name.strip(), new_password)
-                    st.success(f"{new_name} を作りました。ユーザー名と最初のパスワードを本人に伝えてください。")
+                    app_auth.add_user(new_name.strip(), first_password, must_change=True)
+                    st.success(f"{new_name} を作りました。次のユーザー名と最初のパスワードを、本人だけに伝えてください（この表示は一度だけです）。")
+                    st.code(f"ユーザー名：{new_name.strip()}\n最初のパスワード：{first_password}", language=None)
+                    st.caption("本人は最初のログインで、自分のパスワードに変えるよう求められます。")
                 except ValueError as e:
                     st.error(str(e))
         others = [u for u in app_auth.list_users() if u != user]
         if others:
             target = st.selectbox("アカウントを選ぶ", others)
-            with st.form("reset_password", clear_on_submit=True):
-                reset_to = st.text_input(f"{target} の新しいパスワード（8文字以上）", type="password")
-                if st.form_submit_button("パスワードを設定し直す"):
-                    try:
-                        app_auth.set_password(target, reset_to)
-                        st.success(f"{target} のパスワードを設定し直しました。")
-                    except ValueError as e:
-                        st.error(str(e))
+            if st.button(f"{target} のパスワードを設定し直す"):
+                reset_to = app_auth.generate_password()
+                app_auth.set_password(target, reset_to, must_change=True)
+                app_auth.clear_failures(target)
+                st.success(f"{target} のパスワードを設定し直しました。次のパスワードを本人だけに伝えてください（この表示は一度だけです）。")
+                st.code(reset_to, language=None)
+                st.caption("本人は次のログインで、自分のパスワードに変えるよう求められます。ロックも解除しました。")
             confirm = st.checkbox(f"{target} の予定・設定・予約サイトのログイン情報もすべて削除することを確認しました")
             if st.button(f"{target} のアカウントを削除", disabled=not confirm):
                 delete_user_data(target)
@@ -253,7 +300,7 @@ if admin:
 with st.expander("この画面のパスワードを変える"):
     with st.form("change_password", clear_on_submit=True):
         current = st.text_input("今のパスワード", type="password")
-        new = st.text_input("新しいパスワード（8文字以上）", type="password")
+        new = st.text_input(f"新しいパスワード（{app_auth.MIN_LENGTH}文字以上）", type="password")
         if st.form_submit_button("変更する"):
             if not app_auth.verify(user, current):
                 st.error("今のパスワードが違います。")

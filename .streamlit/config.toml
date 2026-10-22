@@ -2,10 +2,14 @@
 [server]
 address = "localhost"
 port = 8501
+# 別のサイトからの偽の操作を防ぐ（初期値どおり有効にしておく）
+enableXsrfProtection = true
 
 # 画面右上の「Deploy」など、外部サービスへの公開や開発用のメニューを出さない
 [client]
 toolbarMode = "viewer"
+# エラーの詳しい中身（プログラムの場所など）を画面に出さない（インターネットに公開するため）
+showErrorDetails = false
 
 # 利用状況の統計を外部に送らない
 [browser]
