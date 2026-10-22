@@ -19,7 +19,10 @@ from playwright.sync_api import Page, sync_playwright
 import credentials
 from auto_login import LOGIN_PATH, login
 from booking_rules import (
+    CLOSE_TIME,
     DAILY_LIMIT_MIN,
+    MAX_BOOKINGS_PER_DAY,
+    OPEN_TIME,
     DURATION_CHOICES_MIN,
     PRACTICE_ENSEMBLE,
     LEGACY_ROOM_TB,
@@ -28,6 +31,7 @@ from booking_rules import (
     booking_opens_at,
     end_datetime,
     start_datetime,
+    within_hours,
 )
 from check_room import mask_numbers
 from inspect_page import safe_url
@@ -35,6 +39,7 @@ from plans_store import (
     AUTO_RUNNING,
     STATUS_BOOKED,
     auto_state,
+    booked_count_on,
     booked_minutes_on,
     find_plan,
     load_plans,
@@ -48,6 +53,7 @@ from rooms import (
     NEEDS_MEMBERS,
     NOTICE_ROOMS,
     TEACHER_ROOMS,
+    WIND_ONLY_ROOMS,
     event_id_of,
     needs_members,
     notice_approved,
@@ -70,6 +76,11 @@ def chosen_rooms(user: str | None, practice: str) -> list[str]:
 def approved_by(user: str | None) -> bool:
     """予約する本人が、注意事項の今の文面を承認しているか（ユーザーなしで直接動かすときは、動かした本人が承認したとみなす）。"""
     return notice_approved(load_settings(user)) if user else True
+
+
+def wind_of(user: str | None) -> bool:
+    """予約する本人が管楽器コースか（ユーザーなしで直接動かすときは、動かした本人が決めたとみなす）。"""
+    return bool(load_settings(user).get("wind_course")) if user else True
 
 
 def teacher_of(user: str | None) -> str | None:
@@ -164,6 +175,9 @@ def apply_plan(args: argparse.Namespace) -> list[str]:
     total = plan.get("existing_min", 0) + booked + args.minutes
     if total > DAILY_LIMIT_MIN:
         raise SystemExit(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約しません。")
+    count = booked_count_on(plans, args.date, exclude_id=plan["id"], owner=args.user) + 1
+    if count > MAX_BOOKINGS_PER_DAY:
+        raise SystemExit(f"この日の予約が{count}回目になり、1日{MAX_BOOKINGS_PER_DAY}回までを超えるため予約しません。")
     return plan.get("members", [])
 
 
@@ -187,6 +201,8 @@ def main() -> None:
 
 def run(args: argparse.Namespace) -> None:
     plan_members = apply_plan(args) if args.plan_id else None
+    if not within_hours(args.start, args.minutes):
+        raise SystemExit(f"利用時間が{OPEN_TIME:%H:%M}〜{CLOSE_TIME:%H:%M}に収まらないため予約しません。")
     chosen = getattr(args, "rooms", None) or chosen_rooms(args.user, args.practice)
     approved = approved_by(args.user)
     if not approved and (unapproved := [r for r in chosen if r in NOTICE_ROOMS]):
@@ -194,7 +210,10 @@ def run(args: argparse.Namespace) -> None:
     teacher = teacher_of(args.user)
     if not teacher and (no_teacher := [r for r in chosen if r in TEACHER_ROOMS]):
         print(f"担当教員名を設定していないため試さない部屋：{', '.join(no_teacher)}")
-    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved, has_teacher=bool(teacher))
+    wind = wind_of(args.user)
+    if not wind and (wind_only := [r for r in chosen if r in WIND_ONLY_ROOMS]):
+        print(f"管楽器コースと設定していないため試さない部屋：{', '.join(wind_only)}")
+    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved, has_teacher=bool(teacher), wind=wind)
     if too_long:
         print(f"利用時間が長すぎるため試さない部屋：{', '.join(too_long)}")
     if not rooms:

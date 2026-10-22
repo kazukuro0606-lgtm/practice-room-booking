@@ -1,7 +1,7 @@
 import unittest
 from datetime import date, datetime, time
 
-from booking_rules import TOKYO, check_plan, end_datetime, start_datetime
+from booking_rules import TOKYO, check_plan, end_datetime, has_short_gap, start_datetime, within_hours
 
 
 class BookingRulesTest(unittest.TestCase):
@@ -30,6 +30,19 @@ class BookingRulesTest(unittest.TestCase):
             end_datetime(start, 45)
         with self.assertRaises(ValueError):
             check_plan(date(2026, 10, 28), time(15, 0), 60, -30)
+
+    def test_within_university_hours(self):
+        self.assertTrue(within_hours(time(7, 0), 60))
+        self.assertTrue(within_hours(time(19, 0), 180))  # 22:00 ちょうどに終わる
+        self.assertFalse(within_hours(time(6, 30), 60))
+        self.assertFalse(within_hours(time(21, 30), 60))  # 22:30 まではみ出す
+
+    def test_short_gap(self):
+        others = [(time(9, 0), time(9, 30))]
+        self.assertTrue(has_short_gap(others, time(10, 0), time(10, 30)))  # 9:30〜10:00 の30分の空き
+        self.assertTrue(has_short_gap(others, time(8, 0), time(8, 30)))  # 後ろ側にも30分の空き
+        self.assertFalse(has_short_gap(others, time(9, 30), time(10, 0)))  # ちょうど続いている
+        self.assertFalse(has_short_gap(others, time(10, 30), time(11, 0)))  # 1時間あいている
 
 
 if __name__ == "__main__":

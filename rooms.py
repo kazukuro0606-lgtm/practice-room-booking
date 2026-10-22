@@ -39,6 +39,8 @@ PLAIN_ROOMS = (
 NOTICE_ROOMS = {"E215", "E312", "E313", "E412", "E414", "E415", "E432", "E441", "E442", "E451", "E452"}
 # さらに「担当教員名」（主科の担当教員名。該当しない場合は AA）が必須の部屋
 TEACHER_ROOMS = {"E313"}
+# 管楽器コースの学生だけが使える部屋（大学の予約ルール「エチュードステーション練習室予約について」）
+WIND_ONLY_ROOMS = {"E412", "E432", "E441", "E442", "E451", "E452"}
 VERIFIED_ROOMS = PLAIN_ROOMS | NOTICE_ROOMS
 
 # 部屋ごとの決まり
@@ -68,16 +70,32 @@ def room_label(room: str) -> str:
     return f"{room}室({note})" if note else f"{room}室"
 
 
-def usable_rooms(approved: bool, has_teacher: bool = False) -> list[str]:
+def usable_rooms(approved: bool, has_teacher: bool = False, wind: bool = False) -> list[str]:
     """自動予約に使える部屋（一覧の順）。
 
     注意事項のある部屋は、その人が文面を承認しているときだけ。担当教員名が必須の部屋は、さらに設定しているときだけ。
+    管楽器コースのみの部屋は、管楽器コースだと設定しているときだけ。
     """
     return [
         r
         for r in ROOM_IDS
-        if r in PLAIN_ROOMS or (approved and r in NOTICE_ROOMS and (has_teacher or r not in TEACHER_ROOMS))
+        if r in PLAIN_ROOMS
+        or (
+            approved
+            and r in NOTICE_ROOMS
+            and (has_teacher or r not in TEACHER_ROOMS)
+            and (wind or r not in WIND_ONLY_ROOMS)
+        )
     ]
+
+
+def permissions(settings: dict) -> dict:
+    """その人の設定から、使える部屋を決める条件を取り出す（usable_rooms・rooms_for_plan に渡す）。"""
+    return {
+        "approved": notice_approved(settings),
+        "has_teacher": bool(settings.get("teacher_name")),
+        "wind": bool(settings.get("wind_course")),
+    }
 
 
 def notice_approved(settings: dict) -> bool:
@@ -95,7 +113,7 @@ def rooms_setting(settings: dict) -> dict[str, list[str]]:
     部屋を選べるようになる前の設定（3階の「よく使う部屋」）は、それを先頭にした3階の部屋として引き継ぐ。
     注意事項のある部屋は、その人が文面を承認していなければ外す（空になることもある）。
     """
-    allowed = set(usable_rooms(notice_approved(settings), bool(settings.get("teacher_name"))))
+    allowed = set(usable_rooms(**permissions(settings)))
     chosen = settings.get("rooms") or {}
     favorites = [r for r in settings.get("favorite_rooms", []) if r in DEFAULT_ROOMS[PRACTICE_SOLO]]
     legacy_solo = favorites + [r for r in DEFAULT_ROOMS[PRACTICE_SOLO] if r not in favorites]
@@ -107,14 +125,14 @@ def rooms_setting(settings: dict) -> dict[str, list[str]]:
 
 
 def rooms_for_plan(
-    chosen: list[str], minutes: int, approved: bool, has_teacher: bool = False
+    chosen: list[str], minutes: int, approved: bool, has_teacher: bool = False, wind: bool = False
 ) -> tuple[list[str], list[str]]:
     """この予定で試す部屋（最大5室）と、利用時間が長すぎて外した部屋を返す。
 
     注意事項のある部屋は、その人が文面を承認していなければ外す（承認を取り消した後に動く予定のため）。
-    担当教員名が必須の部屋は、担当教員名を設定していなければ外す。
+    担当教員名が必須の部屋は、担当教員名を設定していなければ外す。管楽器コースのみの部屋も同じ。
     """
-    allowed = set(usable_rooms(approved, has_teacher))
+    allowed = set(usable_rooms(approved, has_teacher, wind))
     usable = [r for r in chosen if r in allowed]
     too_long = [r for r in usable if minutes > max_minutes(r)]
     to_try = [r for r in usable if r not in too_long][:MAX_ROOMS_TO_TRY]

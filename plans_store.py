@@ -80,6 +80,18 @@ def booked_minutes_on(plans: list[dict], use_date: date, exclude_id: str | None 
     )
 
 
+def booked_count_on(plans: list[dict], use_date: date, exclude_id: str | None = None, owner: str | None = None) -> int:
+    """同じ利用日の「予約完了」の予定の数。owner を指定すると、その人の予定だけを数える。"""
+    return sum(
+        1
+        for p in plans
+        if p["use_date"] == use_date.isoformat()
+        and p["status"] == STATUS_BOOKED
+        and p["id"] != exclude_id
+        and (owner is None or p.get("owner") == owner)
+    )
+
+
 def claim_legacy(admin: str) -> None:
     """複数人対応の前に登録した予定（owner なし）と設定を、管理者のものにする。"""
     plans = load_plans()

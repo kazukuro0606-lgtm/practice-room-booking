@@ -13,12 +13,17 @@ import streamlit as st
 import app_auth
 import credentials
 from booking_rules import (
+    CLOSE_TIME,
     DAILY_LIMIT_MIN,
     DURATION_CHOICES_MIN,
+    MAX_BOOKINGS_PER_DAY,
+    OPEN_TIME,
     PRACTICE_ENSEMBLE,
     PRACTICE_SOLO,
     TOKYO,
     check_plan,
+    has_short_gap,
+    within_hours,
 )
 from plans_store import (
     AUTO_OFF,
@@ -26,6 +31,7 @@ from plans_store import (
     AUTO_RUNNING,
     STATUS_BOOKED,
     STATUS_PLANNED,
+    booked_count_on,
     booked_minutes_on,
     claim_legacy,
     delete_user_data,
@@ -45,7 +51,9 @@ from rooms import (
     ROOM_IDS,
     max_minutes,
     needs_members,
+    WIND_ONLY_ROOMS,
     notice_approved,
+    permissions,
     room_label,
     rooms_for_plan,
     rooms_setting,
@@ -232,8 +240,8 @@ with st.expander("注意事項の承認（" + ("承認済み" if approved else "
 
 # ---- 自動予約の設定 ----
 my_rooms = rooms_setting(settings)
-has_teacher = bool(settings.get("teacher_name"))
-with st.expander("自動予約の設定（使う部屋）"):
+perms = permissions(settings)
+with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.session_state.get("settings_saved"))):
     st.caption(
         f"練習の種類ごとに、使う部屋を**試したい順に**選んでください。1回の予約で、上から最大{MAX_ROOMS_TO_TRY}室を試します。"
         "選べるのは、予約画面の作りを確かめた部屋だけです。注意事項のある部屋（Medium・Large）は、上で承認すると選べます。"
@@ -242,7 +250,7 @@ with st.expander("自動予約の設定（使う部屋）"):
     for practice in PRACTICE_TYPES:
         chosen[practice] = st.multiselect(
             f"{practice}で使う部屋（選んだ順に試します）",
-            usable_rooms(approved, has_teacher),
+            usable_rooms(**perms),
             default=my_rooms[practice],
             format_func=room_label,
             key=f"rooms_{practice}",
@@ -252,12 +260,19 @@ with st.expander("自動予約の設定（使う部屋）"):
         value=settings.get("teacher_name", ""),
         help="設定すると、注意事項を承認している人は E313 も選べるようになります（保存してから選んでください）。",
     )
+    wind_course = st.checkbox(
+        "管楽器コースです（" + "・".join(sorted(WIND_ONLY_ROOMS)) + " を使う）",
+        value=bool(settings.get("wind_course")),
+        help="大学のルールで、これらの部屋は管楽器コースの学生だけが使えます。チェックして保存すると選べるようになります（注意事項の承認も必要です）。",
+    )
     # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
     st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
     if st.button("設定を保存"):
-        save_settings(user, {**settings, "rooms": chosen, "teacher_name": teacher_name.strip()})
-        settings = load_settings(user)
-        my_rooms = rooms_setting(settings)
+        save_settings(user, {**settings, "rooms": chosen, "teacher_name": teacher_name.strip(), "wind_course": wind_course})
+        # 選べる部屋が変わることがあるので、画面を読み直してから知らせる
+        st.session_state["settings_saved"] = True
+        st.rerun()
+    if st.session_state.pop("settings_saved", False):
         st.success("保存しました。これから登録する予定に使われます（登録済みの予定の部屋は変わりません）。")
     for practice, rooms in chosen.items():
         if not rooms:
@@ -315,13 +330,14 @@ with st.expander("この画面のパスワードを変える"):
 st.header("1. 予定を入力")
 use_date = st.date_input("利用日", value=date.today())
 # 時刻の入力欄は環境によって操作しにくいため、30分刻みの一覧から選ぶ
-START_TIMES = [time(h, m) for h in range(24) for m in (0, 30)]
+# 大学の予約ルールで、利用できるのは 7時〜22時
+START_TIMES = [time(h, m) for h in range(OPEN_TIME.hour, CLOSE_TIME.hour) for m in (0, 30)]
 start_time = st.selectbox(
     "開始時刻", START_TIMES, index=START_TIMES.index(time(15, 0)), format_func=lambda t: t.strftime("%H:%M")
 )
 duration = st.radio("利用時間", DURATION_CHOICES_MIN, format_func=duration_label, horizontal=True)
 practice_type = st.radio("練習の種類", PRACTICE_TYPES, horizontal=True)
-plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration, approved, has_teacher)
+plan_rooms, too_long = rooms_for_plan(my_rooms[practice_type], duration, **perms)
 members_text = ""
 if needs_members(plan_rooms):
     members_text = st.text_area(
@@ -353,6 +369,21 @@ st.write(
 )
 if check.over_daily_limit:
     st.warning(f"この日の合計が{DAILY_LIMIT_MIN}分を超えています。この予定は自動予約できません。")
+outside_hours = not within_hours(start_time, duration)
+if outside_hours:
+    st.error(f"利用できるのは {OPEN_TIME:%H:%M}〜{CLOSE_TIME:%H:%M} です。終わりが {CLOSE_TIME:%H:%M} を過ぎないようにしてください。")
+count_today = booked_count_on(my_plans, use_date) + 1
+if count_today > MAX_BOOKINGS_PER_DAY:
+    st.warning(f"この日の予約が{count_today}回目になります。1日{MAX_BOOKINGS_PER_DAY}回までなので、この予定は自動予約できません。")
+same_day = [
+    (time.fromisoformat(x["start"]), time.fromisoformat(x["end"])) for x in my_plans if x["use_date"] == use_date.isoformat()
+]
+if has_short_gap(same_day, start_time, check.end_at.time()):
+    st.warning(
+        "同じ日のほかの予定との間が30分以下しか空いていません。30分おきに予約と空きを作る使い方は、"
+        "規程より長く使う悪質な利用とみなされることがあります。続けて使うなら、1つの予定にまとめてください。"
+    )
+st.caption("閉館日・短縮開館日も、予約サイトでは予約できてしまいます。開館時間を確かめてから登録してください。")
 if plan_rooms:
     st.write(f"試す部屋（この順）：{rooms_text(plan_rooms)}")
 if too_long:
@@ -363,7 +394,7 @@ missing_members = needs_members(plan_rooms) and not members
 if missing_members:
     st.error("同時利用者の学籍番号が必要な部屋が含まれています。")
 
-can_register = bool(plan_rooms) and not missing_members
+can_register = bool(plan_rooms) and not missing_members and not outside_hours
 if st.button("予定として登録する", disabled=not can_register):
     new_plan = {
         "id": new_id(),
@@ -425,6 +456,10 @@ for p in my_plans:
         over = total > DAILY_LIMIT_MIN
         if over:
             st.warning(f"この日の合計が{total}分になり、{DAILY_LIMIT_MIN}分を超えるため予約係に任せられません。")
+        count = booked_count_on(my_plans, date.fromisoformat(p["use_date"]), pid) + 1
+        if count > MAX_BOOKINGS_PER_DAY:
+            over = True
+            st.warning(f"この日の予約が{count}回目になり、1日{MAX_BOOKINGS_PER_DAY}回までを超えるため予約係に任せられません。")
         col1, col2, col3 = st.columns(3)
         if auto is AUTO_OFF:
             if col1.button("予約係に任せる", key=f"auto{pid}", disabled=over or not has_credentials, type="primary"):

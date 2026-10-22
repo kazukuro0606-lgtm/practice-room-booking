@@ -15,6 +15,13 @@ DAILY_LIMIT_MIN = 180
 # 予約受付は利用終了日時のこの日数前から
 OPEN_DAYS_BEFORE_END = 7
 
+# 大学の予約ルール（エチュードステーション練習室予約について）
+OPEN_TIME = time(7, 0)  # 7時から
+CLOSE_TIME = time(22, 0)  # 22時まで
+MAX_BOOKINGS_PER_DAY = 4  # 1日の利用時間は最大4回に分けて予約できる
+# 30分おきに予約と空きを交互に作る使い方は、規程を超える利用とみなされることがある
+SHORT_GAP = timedelta(minutes=30)
+
 PRACTICE_SOLO = "個人練習"
 PRACTICE_ENSEMBLE = "アンサンブル"
 
@@ -67,3 +74,23 @@ def check_plan(
         daily_total_min=total,
         over_daily_limit=total > DAILY_LIMIT_MIN,
     )
+
+
+def within_hours(start_time: time, duration_min: int) -> bool:
+    """7時〜22時の中に収まるか。"""
+    start = datetime.combine(date(2000, 1, 1), start_time)
+    end = start + timedelta(minutes=duration_min)
+    return start_time >= OPEN_TIME and end <= datetime.combine(date(2000, 1, 1), CLOSE_TIME)
+
+
+def has_short_gap(others: list[tuple[time, time]], start_time: time, end_time: time) -> bool:
+    """同じ日のほかの予定との間に、30分以下の空きができるか（ちょうど続いている・重なっているときは数えない）。"""
+    day = date(2000, 1, 1)
+    start = datetime.combine(day, start_time)
+    end = datetime.combine(day, end_time)
+    for other_start, other_end in others:
+        before = start - datetime.combine(day, other_end)  # ほかの予定の後に、この予定が来るとき
+        after = datetime.combine(day, other_start) - end  # この予定の後に、ほかの予定が来るとき
+        if timedelta(0) < before <= SHORT_GAP or timedelta(0) < after <= SHORT_GAP:
+            return True
+    return False
