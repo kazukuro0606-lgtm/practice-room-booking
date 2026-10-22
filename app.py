@@ -120,21 +120,26 @@ def delete_own_plan(user: str, plan_id: str) -> None:
 
 st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
 
-# Streamlit のページは「英語」を名乗るので、スマホのブラウザが自動翻訳しようとする。翻訳で画面の文字が
-# 書き換わると、画面の更新で「NotFoundError：オブジェクトが見つかりません」になるため、
-# 「日本語のページで、翻訳しない」と名乗らせる（決まった文字だけを書き込む。入力された文字は使わない）
+# Streamlit のページは「英語」を名乗るので、スマホのブラウザが自動翻訳しようとする。翻訳や、iPhone の
+# データ検出（日付や番号を自動でリンクにする）で画面の文字が書き換わると、画面の更新で
+# 「NotFoundError：オブジェクトが見つかりません」になるため、「日本語のページで、翻訳もリンク化もしない」と伝える
+# （決まった文字だけを書き込む。入力された文字は使わない）
 NO_TRANSLATE_JS = """
 <script>
 const doc = window.parent.document;
 doc.documentElement.setAttribute("lang", "ja");
 doc.documentElement.setAttribute("translate", "no");
 doc.documentElement.classList.add("notranslate");
-if (!doc.querySelector('meta[name="google"]')) {
+function addMeta(name, content) {
+  if (doc.querySelector(`meta[name="${name}"]`)) return;
   const meta = doc.createElement("meta");
-  meta.name = "google";
-  meta.content = "notranslate";
+  meta.name = name;
+  meta.content = content;
   doc.head.appendChild(meta);
 }
+addMeta("google", "notranslate");
+// iPhone のブラウザが日付・時刻・番号を電話番号などと見なしてリンクに書き換えると、同じエラーになるので止める
+addMeta("format-detection", "telephone=no, date=no, address=no, email=no");
 </script>
 """
 components.html(NO_TRANSLATE_JS, height=0)
