@@ -66,7 +66,7 @@ class PlansStoreTest(unittest.TestCase):
         run = load_plans()[0]["last_run"]
         self.assertEqual(run["full_rooms"], ["E320", "E321"])
         self.assertEqual(run["at"], "2026-10-19 18:00:02")
-        self.assertEqual(load_settings("kazu"), {"favorite_rooms": [], "skip_confirm": False, "approved_notices": []})
+        self.assertEqual(load_settings("kazu"), plans_store.DEFAULT_SETTINGS)
         save_settings("kazu", {"favorite_rooms": ["E330"], "skip_confirm": True})
         self.assertEqual(load_settings("kazu")["favorite_rooms"], ["E330"])
         self.assertEqual(load_settings("friend1")["favorite_rooms"], [])  # 人ごとに別

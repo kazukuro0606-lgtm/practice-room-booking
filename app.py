@@ -57,6 +57,7 @@ from plans_store import (
     update_plans,
 )
 from notices import NOTICE_DISPLAY, NOTICE_VERSION
+from onboarding import AGREEMENT, ONBOARDING_VERSION, PAGES
 from rooms import (
     MAX_ROOMS_TO_TRY,
     NOTICE_ROOMS,
@@ -221,13 +222,64 @@ def require_password_change(user: str) -> None:
     st.stop()
 
 
+def require_onboarding(user: str) -> None:
+    """初めて使う人（と「使い方を見る」を押した人）に、注意事項と使い方を1ページずつ見せる。
+
+    初めての人は、最後のページで同意するまでメインの画面に進めない。
+    """
+    settings = load_settings(user)
+    first_time = settings.get("onboarded_version", 0) < ONBOARDING_VERSION
+    if not first_time and not st.session_state.get("show_guide"):
+        return
+    page = min(st.session_state.get("guide_page", 0), len(PAGES) - 1)
+    title, body = PAGES[page]
+    st.title("はじめに" if first_time else "使い方")
+    st.progress((page + 1) / len(PAGES), text=f"{page + 1} / {len(PAGES)}　{title}")
+    st.subheader(title)
+    st.markdown(body)
+    last = page == len(PAGES) - 1
+    if last and first_time:
+        agreed = st.checkbox(AGREEMENT)
+    col_back, col_next = st.columns(2)
+    if page > 0 and col_back.button("← 戻る", width="stretch"):
+        st.session_state["guide_page"] = page - 1
+        st.rerun()
+    if not last:
+        if col_next.button("次へ →", type="primary", width="stretch"):
+            st.session_state["guide_page"] = page + 1
+            st.rerun()
+    elif first_time:
+        if col_next.button("使い始める", type="primary", disabled=not agreed, width="stretch"):
+            # 読んでいる間に別の画面で変えた設定を消さないように、読み直してから書く
+            save_settings(user, {**load_settings(user), "onboarded_version": ONBOARDING_VERSION})
+            st.session_state.pop("guide_page", None)
+            st.rerun()
+    elif col_next.button("閉じる", type="primary", width="stretch"):
+        st.session_state.pop("show_guide", None)
+        st.session_state.pop("guide_page", None)
+        st.rerun()
+    if not first_time and page < len(PAGES) - 1 and st.button("説明を閉じる"):
+        st.session_state.pop("show_guide", None)
+        st.session_state.pop("guide_page", None)
+        st.rerun()
+    if first_time and st.button("ログアウト"):
+        st.session_state.clear()
+        st.rerun()
+    st.stop()
+
+
 user = require_login()
 require_password_change(user)
+require_onboarding(user)
 admin = app_auth.is_admin(user)
 
 st.title("練習室予約の予定登録")
-col_who, col_logout = st.columns([3, 1])
+col_who, col_guide, col_logout = st.columns([2, 1, 1])
 col_who.caption(f"ログイン中：**{user}**{'（管理者）' if admin else ''}")
+if col_guide.button("使い方を見る"):
+    st.session_state["show_guide"] = True
+    st.session_state["guide_page"] = 0
+    st.rerun()
 if col_logout.button("ログアウト"):
     st.session_state.clear()
     st.rerun()
