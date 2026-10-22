@@ -23,37 +23,41 @@ RESULT_FILE = Path(__file__).parent / "piano_result.txt"
 PIANO_TAGS = ("グランドピアノ", "アップライトピアノ", "ピアノなし", "電子ピアノ")
 ROOM_NAME = re.compile(r"[A-Z]{1,3}\d{2,4}室")
 
-# 選択肢（select）を除いた画面の文字から、部屋の名前を集める（選択肢には全部の部屋が入っているため）
+# 画面に見えている要素のうち、その要素自身の文字が部屋の名前だけのもの（表の見出しなど）。
+# 選択肢（select）や、隠れている説明の中の部屋の名前は数えない
 ROOMS_JS = """
-() => {
-  const body = document.body.cloneNode(true);
-  body.querySelectorAll("select, option, script, style").forEach((e) => e.remove());
-  return body.textContent;
-}
+() => [...document.querySelectorAll("body *")]
+  .filter((e) => !e.closest("select")
+    && (e.offsetWidth || e.offsetHeight || e.getClientRects().length)
+    && getComputedStyle(e).visibility !== "hidden")
+  .map((e) => [...e.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("").trim())
+  .filter((t) => /^[A-Z]{1,3}\\d{2,4}室/.test(t))
 """
 
-# タグの文字を含むいちばん小さい要素と、そのまわり（押せる要素・チェック欄）の作り
-TAG_JS = """
-(label) => {
-  const hits = [...document.querySelectorAll("body *")].filter(
-    (e) => e.children.length === 0 && (e.textContent || "").trim().startsWith(label));
-  if (!hits.length) return null;
-  const el = hits[0];
-  const clickable = el.closest("a, button, label, li") || el;
-  const target = clickable.getAttribute("for");
-  const input = clickable.querySelector("input") || (target && document.getElementById(target));
-  return {
-    html: clickable.outerHTML.slice(0, 400),
-    checked: input ? input.checked : null,
-    className: clickable.className || "",
-  };
-}
+# その要素自身の文字（子要素の文字を含まない）にタグの文字を含む要素。タグ以外（部屋の説明など）に同じ言葉があるかも見る
+MATCHES_JS = """
+(label) => [...document.querySelectorAll("body *")]
+  .filter((e) => [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.includes(label)))
+  .slice(0, 6)
+  .map((e) => {
+    const box = e.closest("a, button, label, li") || e;
+    const input = box.querySelector("input") || (box.getAttribute("for") && document.getElementById(box.getAttribute("for")));
+    return {
+      visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
+      checked: input ? input.checked : null,
+      html: box.outerHTML.slice(0, 300),
+    };
+  })
 """
+
+# 「タグから絞り込み」の欄（その中だけでタグを押す）
+TAG_PANEL = ":is(div, section, form, ul, dl, fieldset):has-text('タグから絞り込み'):has-text('ピアノなし')"
 
 
 def rooms_on_page(page: Page) -> list[str]:
     seen: list[str] = []
-    for name in ROOM_NAME.findall(page.evaluate(ROOMS_JS)):
+    for text in page.evaluate(ROOMS_JS):
+        name = ROOM_NAME.match(text).group(0)
         if name not in seen:
             seen.append(name)
     return seen
@@ -65,16 +69,24 @@ def open_calendar(page: Page) -> None:
 
 
 def tag_info(page: Page, label: str) -> str:
-    info = page.evaluate(TAG_JS, label)
-    if not info:
+    matches = page.evaluate(MATCHES_JS, label)
+    if not matches:
         return "（見つからない）"
-    return mask_numbers(f"checked={info['checked']} class={info['className']} html={info['html']}")
+    lines = [f"{len(matches)}か所（最大6）"]
+    for m in matches:
+        lines.append(f"    - 見える={m['visible']} checked={m['checked']} html={m['html']}")
+    return mask_numbers("\n".join(lines))
 
 
 def click_tag(page: Page, label: str) -> None:
-    page.get_by_text(label, exact=False).first.click()
+    panel = page.locator(TAG_PANEL).last  # いちばん内側の欄
+    if not panel.is_visible():
+        # 欄が閉じているときは「タグから絞り込み」を押して開く
+        page.get_by_text("タグから絞り込み").first.click()
+        page.wait_for_timeout(800)
+    panel.get_by_text(label).first.click()
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(1500)  # 絞り込みが画面の中だけで行われる場合に備えて少し待つ
+    page.wait_for_timeout(2500)  # 絞り込みが画面の中だけで行われる場合に備えて少し待つ
 
 
 def main() -> None:
