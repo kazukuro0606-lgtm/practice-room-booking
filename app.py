@@ -535,6 +535,36 @@ with st.expander("この画面のパスワードを変える"):
                 except ValueError as e:
                     st.error(str(e))
 
+renamed_to = st.session_state.pop("renamed_to", None)
+with st.expander("この画面のユーザー名を変える", expanded=bool(renamed_to)):
+    st.caption("予定・設定・予約サイトのログイン情報は、新しいユーザー名にそのまま引き継がれます。変えたら、次からは新しいユーザー名でログインします。")
+    # 自動予約やアカウントの確認の途中で名前が変わると、その人のログイン情報が見つからなくなるので、終わるまで待ってもらう
+    busy = any(p.get("auto") == AUTO_RUNNING for p in plans_of(load_plans(), user)) or check_status == STATUS_RUNNING
+    if busy:
+        st.info("いま予約係が、あなたの自動予約かアカウントの確認を実行中です。終わってから変えてください。")
+    with st.form("change_username", clear_on_submit=True):
+        name = st.text_input("新しいユーザー名（英小文字・数字・_・- の2〜20文字）", autocomplete="username")
+        current = st.text_input("今のパスワード（確認のため）", type="password", autocomplete="current-password")
+        if st.form_submit_button("変更する", disabled=busy):
+            name = name.strip()
+            # 貼り付けたときの前後の空白は除いて確かめる（ログインと同じ）
+            password = current if app_auth.verify(user, current) else current.strip()
+            if not app_auth.verify(user, password):
+                st.error("今のパスワードが違います。")
+            elif name == user:
+                st.error("今と同じユーザー名です。")
+            elif problem := app_auth.username_problem(name):
+                st.error(problem)
+            elif app_auth.password_problem(password, name):
+                st.error("今のパスワードに新しいユーザー名が含まれるため、その名前には変えられません。先にパスワードを変えてください。")
+            else:
+                rename_account(user, name)
+                st.session_state["user"] = name
+                st.session_state["renamed_to"] = name
+                st.rerun()
+    if renamed_to:
+        st.success(f"ユーザー名を {renamed_to} に変えました。次からはこのユーザー名でログインしてください。")
+
 # ---- 1. 予定を入力 ----
 st.header("1. 予定を入力")
 use_date = st.date_input("利用日", value=date.today())
