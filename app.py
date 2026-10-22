@@ -5,15 +5,53 @@
 予約可能日時に、予定を登録した本人のログイン情報で予約する。
 """
 
+import importlib
 import smtplib
+import sys
+import threading
 import time as time_module
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-import account_check
+_APP_DIR = Path(__file__).resolve().parent
+
+
+@st.cache_resource
+def _code_state() -> dict:
+    """このプロセスで最後に読み込んだときの、このフォルダの .py の更新時刻（画面を読み込み直しても残る）。"""
+    return {"newest": None, "lock": threading.Lock()}
+
+
+def _reload_changed_code() -> None:
+    """git pull の後、新しい app.py が古い rooms.py などを使って ImportError にならないように、
+    このフォルダの .py が変わっていたら、読み込み済みの部品を読み直す（Streamlit の自動の読み直しは、
+    Windows では間に合わないことがあった）。このプロセスで最初に画面を開いたときも読み直す。
+    """
+    state = _code_state()
+    newest = max(p.stat().st_mtime for p in _APP_DIR.glob("*.py"))
+    with state["lock"]:  # 同時に開いた人どうしで、読み直しの途中の部品を使わないように
+        if state["newest"] == newest:
+            return
+        stale = [name for name, module in list(sys.modules.items())
+                 if name != "__main__" and getattr(module, "__file__", None)
+                 and Path(module.__file__).resolve().parent == _APP_DIR]
+        for name in stale:
+            del sys.modules[name]
+        for name in stale:
+            try:
+                importlib.import_module(name)
+            except ImportError:
+                pass  # 更新で無くなった部品
+        state["newest"] = newest
+
+
+_reload_changed_code()
+
+import account_check  # noqa: E402（上で部品を読み直してから読み込む）
 import account_checks
 import app_auth
 import credentials
