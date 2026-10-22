@@ -10,8 +10,19 @@ from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 
+import account_checks
 import app_auth
 import credentials
+from account_checks import (
+    STATUS_ERROR,
+    STATUS_LOGIN_FAILED,
+    STATUS_OK,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    load_check,
+    request_check,
+    visible_rooms,
+)
 from booking_rules import (
     CLOSE_TIME,
     DAILY_LIMIT_MIN,
@@ -51,7 +62,6 @@ from rooms import (
     ROOM_IDS,
     max_minutes,
     needs_members,
-    WIND_ONLY_ROOMS,
     notice_approved,
     permissions,
     room_label,
@@ -197,8 +207,20 @@ if col_logout.button("ログアウト"):
 
 # ---- 予約サイトのログイン情報 ----
 has_credentials = credentials.has(user)
-with st.expander("予約サイトのログイン情報" + ("（保存済み）" if has_credentials else "（未保存・最初に設定してください）"),
-                 expanded=not has_credentials):
+check = load_check(user)
+check_status = check.get("status") if check else None
+if not has_credentials:
+    credentials_title = "（未保存・最初に設定してください）"
+elif check_status == STATUS_OK:
+    credentials_title = f"（確認済み：使える部屋 {len(check.get('visible_rooms', {}))}室）"
+elif check_status == STATUS_LOGIN_FAILED:
+    credentials_title = "（ログインできませんでした・保存し直してください）"
+elif check_status == STATUS_ERROR:
+    credentials_title = "（確かめられませんでした）"
+else:
+    credentials_title = "（予約係が確かめています）"
+with st.expander("予約サイトのログイン情報" + credentials_title,
+                 expanded=not has_credentials or check_status in (STATUS_LOGIN_FAILED, STATUS_ERROR)):
     st.caption(
         "自動予約は、あなたのログインIDとパスワードで予約サイトにログインして予約します。"
         "入力した内容は、予約係のPCの資格情報マネージャーに保存され、この画面には表示されません。"
@@ -209,13 +231,26 @@ with st.expander("予約サイトのログイン情報" + ("（保存済み）" 
         if st.form_submit_button("保存する"):
             try:
                 credentials.store(user, login_id, site_password)
-                st.success("保存しました。")
+                # 予約係が、ログインできるか・あなたに見える部屋を確かめる
+                request_check(user)
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
-    if has_credentials and st.button("保存したログイン情報を削除"):
-        credentials.delete(user)
-        st.rerun()
+    if has_credentials:
+        if check_status in (None, STATUS_QUEUED, STATUS_RUNNING):
+            st.info("予約係が、このログイン情報でログインできるか・あなたに見える部屋を確かめています（数分かかります）。再読み込みすると結果が出ます。")
+        elif check_status == STATUS_OK:
+            st.success(f"ログインできました（{check['checked_at']}）。予約サイトであなたに見える部屋：{len(check.get('visible_rooms', {}))}室。")
+        else:
+            st.error(f"{check.get('message', '')}（{check.get('checked_at', '')}）")
+        col_recheck, col_delete = st.columns(2)
+        if col_recheck.button("もう一度確かめる", disabled=check_status in (STATUS_QUEUED, STATUS_RUNNING)):
+            request_check(user)
+            st.rerun()
+        if col_delete.button("保存したログイン情報を削除"):
+            credentials.delete(user)
+            account_checks.delete_check(user)
+            st.rerun()
 
 # ---- 注意事項の承認 ----
 settings = load_settings(user)
@@ -239,13 +274,16 @@ with st.expander("注意事項の承認（" + ("承認済み" if approved else "
             st.rerun()
 
 # ---- 自動予約の設定 ----
-my_rooms = rooms_setting(settings)
-perms = permissions(settings)
+my_visible = visible_rooms(user)
+my_rooms = rooms_setting(settings, my_visible)
+perms = permissions(settings, my_visible)
 with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.session_state.get("settings_saved"))):
     st.caption(
         f"練習の種類ごとに、使う部屋を**試したい順に**選んでください。1回の予約で、上から最大{MAX_ROOMS_TO_TRY}室を試します。"
-        "選べるのは、予約画面の作りを確かめた部屋だけです。注意事項のある部屋（Medium・Large）は、上で承認すると選べます。"
+        "選べるのは、予約画面の作りを確かめた部屋のうち、予約サイトであなたに見える部屋だけです。注意事項のある部屋（Medium・Large）は、上で承認すると選べます。"
     )
+    if my_visible is None:
+        st.caption("予約係があなたのアカウントを確かめるまでは、コース専用の部屋（管楽器の部屋など）は選べません。")
     chosen = {}
     for practice in PRACTICE_TYPES:
         chosen[practice] = st.multiselect(
@@ -260,15 +298,10 @@ with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.ses
         value=settings.get("teacher_name", ""),
         help="設定すると、注意事項を承認している人は E313 も選べるようになります（保存してから選んでください）。",
     )
-    wind_course = st.checkbox(
-        "管楽器コースです（" + "・".join(sorted(WIND_ONLY_ROOMS)) + " を使う）",
-        value=bool(settings.get("wind_course")),
-        help="大学のルールで、これらの部屋は管楽器コースの学生だけが使えます。チェックして保存すると選べるようになります（注意事項の承認も必要です）。",
-    )
     # 予約係は人がいなくても動く前提なので、確認なし（全自動）で予約を送信する
     st.caption("予約係は、確認画面で止まらずに予約を送信します（全自動）。登録する予定の内容をよく確認してください。")
     if st.button("設定を保存"):
-        save_settings(user, {**settings, "rooms": chosen, "teacher_name": teacher_name.strip(), "wind_course": wind_course})
+        save_settings(user, {**settings, "rooms": chosen, "teacher_name": teacher_name.strip()})
         # 選べる部屋が変わることがあるので、画面を読み直してから知らせる
         st.session_state["settings_saved"] = True
         st.rerun()
@@ -280,6 +313,24 @@ with st.expander("自動予約の設定（使う部屋）", expanded=bool(st.ses
 
 # ---- 管理者：アカウントの管理 ----
 if admin:
+    with st.expander("予約サイトのアカウントの確認結果（管理者だけに表示）"):
+        for name in app_auth.list_users():
+            c = load_check(name)
+            if not c:
+                state = "確認待ち" if credentials.has(name) else "予約サイトのログイン情報が未保存"
+                st.write(f"**{name}**：{state}")
+                continue
+            status_text = {
+                STATUS_OK: f"確認済み（見える部屋 {len(c.get('visible_rooms', {}))}室）",
+                STATUS_LOGIN_FAILED: "ログインできなかった",
+                STATUS_ERROR: "確かめられなかった",
+            }.get(c.get("status"), "確認待ち・確認中")
+            st.write(f"**{name}**：{status_text}　{c.get('checked_at', '')}　{c.get('message', '')}")
+            for room, info in c.get("unknown_rooms", {}).items():
+                st.caption(f"{name} に見える、アプリに未登録の部屋：{room}（番号 {info['event_id']}）")
+                st.code("\n".join(info["report"]), language=None)
+        st.caption("未登録の部屋は、この調査結果を Claude に送ると、注意事項や必須の欄に合わせて使えるように登録します。")
+
     with st.expander("アカウントの管理（管理者だけに表示）"):
         with st.form("add_user", clear_on_submit=True):
             st.write("アカウントを作る")
@@ -307,6 +358,7 @@ if admin:
             if st.button(f"{target} のアカウントを削除", disabled=not confirm):
                 delete_user_data(target)
                 credentials.delete(target)
+                account_checks.delete_check(target)
                 app_auth.delete_user(target)
                 st.success(f"{target} を削除しました。")
                 st.rerun()

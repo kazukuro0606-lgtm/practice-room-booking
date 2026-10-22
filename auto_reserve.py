@@ -33,6 +33,7 @@ from booking_rules import (
     start_datetime,
     within_hours,
 )
+from account_checks import visible_rooms
 from check_room import mask_numbers
 from inspect_page import safe_url
 from plans_store import (
@@ -53,7 +54,8 @@ from rooms import (
     NEEDS_MEMBERS,
     NOTICE_ROOMS,
     TEACHER_ROOMS,
-    WIND_ONLY_ROOMS,
+    COURSE_ROOMS,
+    ROOM_IDS,
     event_id_of,
     needs_members,
     notice_approved,
@@ -70,7 +72,7 @@ COMPLETE_TITLE = "予約登録完了"
 
 def chosen_rooms(user: str | None, practice: str) -> list[str]:
     """その人が設定した、練習の種類ごとの部屋（設定がなければ初期値）。"""
-    return rooms_setting(load_settings(user) if user else {})[practice]
+    return rooms_setting(load_settings(user) if user else {}, visible_of(user))[practice]
 
 
 def approved_by(user: str | None) -> bool:
@@ -78,9 +80,9 @@ def approved_by(user: str | None) -> bool:
     return notice_approved(load_settings(user)) if user else True
 
 
-def wind_of(user: str | None) -> bool:
-    """予約する本人が管楽器コースか（ユーザーなしで直接動かすときは、動かした本人が決めたとみなす）。"""
-    return bool(load_settings(user).get("wind_course")) if user else True
+def visible_of(user: str | None) -> set[str] | None:
+    """予約する本人に見える部屋（アカウントの確認で分かったもの）。ユーザーなしで直接動かすときは、すべての部屋。"""
+    return visible_rooms(user) if user else set(ROOM_IDS)
 
 
 def teacher_of(user: str | None) -> str | None:
@@ -210,10 +212,12 @@ def run(args: argparse.Namespace) -> None:
     teacher = teacher_of(args.user)
     if not teacher and (no_teacher := [r for r in chosen if r in TEACHER_ROOMS]):
         print(f"担当教員名を設定していないため試さない部屋：{', '.join(no_teacher)}")
-    wind = wind_of(args.user)
-    if not wind and (wind_only := [r for r in chosen if r in WIND_ONLY_ROOMS]):
-        print(f"管楽器コースと設定していないため試さない部屋：{', '.join(wind_only)}")
-    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved, has_teacher=bool(teacher), wind=wind)
+    visible = visible_of(args.user)
+    if visible is None and (course := [r for r in chosen if r in COURSE_ROOMS]):
+        print(f"アカウントの確認がまだで、使ってよいか分からないため試さない部屋：{', '.join(course)}")
+    elif visible is not None and (hidden := [r for r in chosen if r not in visible]):
+        print(f"予約サイトであなたに見えないため試さない部屋：{', '.join(hidden)}")
+    rooms, too_long = rooms_for_plan(chosen, args.minutes, approved, has_teacher=bool(teacher), visible=visible)
     if too_long:
         print(f"利用時間が長すぎるため試さない部屋：{', '.join(too_long)}")
     if not rooms:

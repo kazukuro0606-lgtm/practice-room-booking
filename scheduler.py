@@ -6,6 +6,8 @@
   起動された側は、予約可能日時の3分前にログインし、時刻になったら予約する（Edgeは画面に出さない）。
 - 1つの予定につき1回だけ試す。結果は予定に記録され、画面の一覧に表示される。
 - 実行のようすは data/logs/予定番号.log に残す（ログイン情報は書かない）。
+- 予約サイトのログイン情報を保存した人（確認待ちの人）ごとに account_check.py を起動し、
+  ログインできるか・その人に見える部屋を確かめる（ログは data/logs/check-ユーザー名.log）。
 - 止めるときは Ctrl + C（実行中の自動予約はそのまま最後まで動く）。
 """
 
@@ -16,6 +18,9 @@ import time as clock
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+import app_auth
+import credentials
+from account_checks import STATUS_RUNNING, needs_check, save_check
 from booking_rules import TOKYO, booking_opens_at, end_datetime, start_datetime
 from plans_store import (
     AUTO_QUEUED,
@@ -49,11 +54,11 @@ def due_plans(plans: list[dict], now: datetime) -> list[dict]:
     ]
 
 
-def launch(plan: dict) -> subprocess.Popen:
+def _spawn(args: list[str], log_name: str) -> subprocess.Popen:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log = open(LOG_DIR / f"{plan['id']}.log", "a", encoding="utf-8")
+    log = open(LOG_DIR / log_name, "a", encoding="utf-8")
     return subprocess.Popen(
-        [sys.executable, "-u", str(APP_DIR / "auto_reserve.py"), "--plan-id", plan["id"], "--unattended"],
+        [sys.executable, "-u", *args],
         cwd=APP_DIR,
         stdout=log,
         stderr=subprocess.STDOUT,
@@ -62,6 +67,19 @@ def launch(plan: dict) -> subprocess.Popen:
         env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+
+
+def launch(plan: dict) -> subprocess.Popen:
+    return _spawn([str(APP_DIR / "auto_reserve.py"), "--plan-id", plan["id"], "--unattended"], f"{plan['id']}.log")
+
+
+def launch_check(user: str) -> subprocess.Popen:
+    return _spawn([str(APP_DIR / "account_check.py"), "--user", user], f"check-{user}.log")
+
+
+def users_to_check() -> list[str]:
+    """予約サイトのログイン情報を保存していて、アカウントの確認がまだの人。"""
+    return [u for u in app_auth.list_users() if needs_check(u) and credentials.has(u)]
 
 
 def tick(now: datetime, running: dict) -> None:
@@ -78,6 +96,13 @@ def tick(now: datetime, running: dict) -> None:
         if set_auto(plan["id"], AUTO_RUNNING):
             running[plan["id"]] = launch(plan)
             print(f"{now:%m/%d %H:%M:%S} {plan.get('owner', '')} の予定 {plan['id']}（{plan['use_date']} {plan['start']}）の自動予約を始めました。")
+    for user in users_to_check():
+        key = f"check:{user}"
+        if key in running:
+            continue  # 前の確認がまだ動いている
+        save_check(user, {"status": STATUS_RUNNING})
+        running[key] = launch_check(user)
+        print(f"{now:%m/%d %H:%M:%S} {user} の予約サイトのアカウントを確かめ始めました。")
 
 
 def already_running(now: datetime) -> bool:
