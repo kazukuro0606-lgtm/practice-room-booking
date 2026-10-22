@@ -9,6 +9,7 @@ import time as time_module
 from datetime import date, datetime, time, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import account_checks
 import app_auth
@@ -118,6 +119,25 @@ def delete_own_plan(user: str, plan_id: str) -> None:
 
 
 st.set_page_config(page_title="練習室予約の予定", page_icon="🎵")
+
+# Streamlit のページは「英語」を名乗るので、スマホのブラウザが自動翻訳しようとする。翻訳で画面の文字が
+# 書き換わると、画面の更新で「NotFoundError：オブジェクトが見つかりません」になるため、
+# 「日本語のページで、翻訳しない」と名乗らせる（決まった文字だけを書き込む。入力された文字は使わない）
+NO_TRANSLATE_JS = """
+<script>
+const doc = window.parent.document;
+doc.documentElement.setAttribute("lang", "ja");
+doc.documentElement.setAttribute("translate", "no");
+doc.documentElement.classList.add("notranslate");
+if (!doc.querySelector('meta[name="google"]')) {
+  const meta = doc.createElement("meta");
+  meta.name = "google";
+  meta.content = "notranslate";
+  doc.head.appendChild(meta);
+}
+</script>
+"""
+components.html(NO_TRANSLATE_JS, height=0)
 
 
 def require_login() -> str:
