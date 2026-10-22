@@ -22,7 +22,7 @@ class RoomsTest(unittest.TestCase):
         self.assertEqual(room_label("E320"), "E320室")
         with self.assertRaises(ValueError):
             event_id_of("E999")
-        self.assertEqual(len(ROOM_IDS), 73)  # 2階21室・3階33室・4階19室
+        self.assertEqual(len(ROOM_IDS), 81)  # 2階28室・3階34室・4階19室
 
     def test_usable_rooms_depend_on_notice_approval(self):
         plain = usable_rooms(False)

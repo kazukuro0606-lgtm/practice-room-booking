@@ -706,7 +706,8 @@ members_text = ""
 if needs_members(plan_rooms):
     members_text = st.text_area(
         "同時利用者の学籍番号（1行に1人・" + rooms_text([r for r in plan_rooms if needs_members([r])]) + "では必須）",
-        help="予約係のPCにだけ保存します。一緒に使う人には、予約に使うことを伝えておいてください。",
+        help="予約係のPCにだけ保存します。一緒に使う人には、予約に使うことを伝えておいてください。"
+        + ("E311 で伴奏合わせのときは、伴奏者の氏名を入れます（予約サイトの案内どおり）。" if "E311" in plan_rooms else ""),
     )
 members = [m.strip() for m in members_text.splitlines() if m.strip()]
 equipment = st.text_input("設備条件（任意）", placeholder="例：ピアノあり、譜面台2台")
