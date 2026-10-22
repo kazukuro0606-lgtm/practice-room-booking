@@ -114,5 +114,41 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(account_checks.load_check("friend1")["status"], account_checks.STATUS_RUNNING)
 
 
+    def test_restart_decision(self):
+        d = scheduler.restart_decision
+        self.assertEqual(d("a", "a", "a", False, False), scheduler.UPDATE_NONE)
+        self.assertEqual(d("a", "a", "b", False, False), scheduler.UPDATE_SETTLING)  # 書き換わった直後はもう1回待つ
+        self.assertEqual(d("a", "b", "b", False, True), scheduler.UPDATE_BUSY)
+        self.assertEqual(d("a", "b", "b", False, False), scheduler.UPDATE_RESTART)
+        self.assertEqual(d("a", "b", "b", True, False), scheduler.UPDATE_NEEDS_INSTALL)
+        self.assertEqual(d("a", "a", "a", True, False), scheduler.UPDATE_NEEDS_INSTALL)  # 部品だけが変わったときも
+
+    def test_code_fingerprint_ignores_tests_and_data(self):
+        folder = Path(self.tmp.name) / "code"
+        folder.mkdir()
+        (folder / "a.py").write_text("x = 1", encoding="utf-8")
+        before = scheduler.code_fingerprint(folder)
+        (folder / "test_a.py").write_text("y = 1", encoding="utf-8")
+        (folder / "notes.txt").write_text("z", encoding="utf-8")
+        self.assertEqual(scheduler.code_fingerprint(folder), before)
+        (folder / "a.py").write_text("x = 2", encoding="utf-8")
+        self.assertNotEqual(scheduler.code_fingerprint(folder), before)
+
+    def test_launch_soon(self):
+        plans = [plan("q", AUTO_QUEUED)]  # 10/22 15:50 に起動する予定
+        self.assertFalse(scheduler.launch_soon(plans, datetime(2026, 10, 22, 15, 34, tzinfo=TOKYO)))
+        self.assertTrue(scheduler.launch_soon(plans, datetime(2026, 10, 22, 15, 35, tzinfo=TOKYO)))
+        self.assertFalse(scheduler.launch_soon([plan("off", AUTO_OFF)], datetime(2026, 10, 22, 15, 49, tzinfo=TOKYO)))
+
+    def test_heartbeat_note_and_clear(self):
+        now = datetime(2026, 10, 22, 15, 0, tzinfo=TOKYO)
+        plans_store.write_heartbeat(now, "お知らせ")
+        self.assertEqual(plans_store.scheduler_note(), "お知らせ")
+        self.assertTrue(scheduler.already_running(now))
+        plans_store.clear_heartbeat()
+        self.assertFalse(scheduler.already_running(now))
+        self.assertEqual(plans_store.scheduler_note(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

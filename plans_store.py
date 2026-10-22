@@ -258,15 +258,30 @@ def auto_state(plan_id: str):
     return AUTO_OFF
 
 
-def write_heartbeat(now: datetime) -> None:
+def write_heartbeat(now: datetime, note: str = "") -> None:
+    """予約係の「動いている印」。note は管理者に知らせたいこと（更新の状態など）。"""
     HEARTBEAT_FILE.parent.mkdir(exist_ok=True)
-    HEARTBEAT_FILE.write_text(json.dumps({"last_seen": now.isoformat()}), encoding="utf-8")
+    HEARTBEAT_FILE.write_text(json.dumps({"last_seen": now.isoformat(), "note": note}, ensure_ascii=False), encoding="utf-8")
+
+
+def clear_heartbeat() -> None:
+    """予約係を止めるときに印を消す（すぐ起動し直しても「すでに動いています」にならないように）。"""
+    HEARTBEAT_FILE.unlink(missing_ok=True)
+
+
+def _heartbeat() -> dict:
+    if not HEARTBEAT_FILE.exists():
+        return {}
+    return json.loads(HEARTBEAT_FILE.read_text(encoding="utf-8"))
 
 
 def scheduler_last_seen() -> datetime | None:
-    if not HEARTBEAT_FILE.exists():
-        return None
-    return datetime.fromisoformat(json.loads(HEARTBEAT_FILE.read_text(encoding="utf-8"))["last_seen"])
+    last_seen = _heartbeat().get("last_seen")
+    return datetime.fromisoformat(last_seen) if last_seen else None
+
+
+def scheduler_note() -> str:
+    return _heartbeat().get("note", "")
 
 
 def load_settings(owner: str) -> dict:

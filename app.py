@@ -59,6 +59,7 @@ from plans_store import (
     rename_owner,
     save_settings,
     scheduler_last_seen,
+    scheduler_note,
     set_auto,
     update_plans,
 )
@@ -786,6 +787,8 @@ if not my_plans:
     st.write("まだ予定はありません。")
 if not has_credentials:
     st.warning("予約サイトのログイン情報が未保存なので、予約係に任せられません。")
+if admin and (note := scheduler_note()):
+    st.warning(f"予約係からのお知らせ（管理者だけに表示）：{note}")
 if not scheduler_running(datetime.now(TOKYO)):
     st.error("予約係が動いていません。任せた予定も、予約係が動くまで予約されません。予約係のPCで `python scheduler.py` を起動してください。")
 for p in my_plans:

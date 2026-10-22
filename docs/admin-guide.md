@@ -66,8 +66,8 @@ PowerShell で、このフォルダ（`cd $HOME\practice-room-booking`）に移�
 | したいこと | すること |
 |---|---|
 | 予約係と画面を起動する | `powershell -ExecutionPolicy Bypass -File .\start.ps1`（サインイン時の自動起動を登録していれば不要） |
-| 止める | 予約係と画面の2つのウィンドウで Ctrl + C。ウィンドウを閉じても止まります |
-| 最新版にする | 止めてから `git pull`。**2分待ってから** `start.ps1`（すぐ起動すると「予約係はすでに動いています」と出ます） |
+| 止める | 予約係と画面の2つのウィンドウで Ctrl + C。ウィンドウを閉じても止まります（閉じたときは、2分待ってから起動し直します） |
+| 最新版にする | 動かしたまま `git pull` するだけ。予約係は、実行中の自動予約がなく15分以内に始まる予定もないときに、自分で起動し直します。画面は再読み込みすると新しくなります。部品の入れ直しが必要な更新のときは、画面に「予約係からのお知らせ」が出るので、その手順に従います |
 | 公開の状態とアドレスを確かめる | `tailscale funnel status` |
 | 公開をやめる・再開する | `tailscale funnel --https=443 off` ／ `tailscale funnel --bg 8501` |
 | 予約係の記録を見る | `Get-ChildItem data\logs \| Sort-Object LastWriteTime` で新しいファイルを探し、`Get-Content data\logs\ファイル名 -Encoding UTF8` |
